@@ -16,6 +16,39 @@ const client = new Client({
   ]
 });
 
+const easyChallenges = [
+  'Only use green weapons or lower.',
+  'Land at a named POI and survive 5 minutes.',
+  'Get 1 elimination with an SMG.',
+  'Loot 3 chests before fighting anyone.',
+  'Use 2 healing items in one match.',
+  'Reach top 25 without using a vehicle.',
+  'Break 10 structures with your pickaxe.',
+  'Open 5 ammo boxes in one match.'
+];
+
+const mediumChallenges = [
+  'Win a fight using only shotguns and ARs.',
+  'Get 3 eliminations in one match.',
+  'Land hot and survive until top 15.',
+  'Use no heals until after your first fight.',
+  'Only carry 3 weapons for the whole match.',
+  'Get an elimination from high ground.',
+  'Travel across 3 named POIs in one game.',
+  'Reach top 10 while carrying at least 500 wood.'
+];
+
+const hardChallenges = [
+  'Win using only blue weapons or one weapon type.',
+  'Get 5 eliminations in one match.',
+  'No shields allowed for the whole game.',
+  'Land at the busiest POI and reach top 5.',
+  'Only use loot from your first building.',
+  'Win without using any medkits or shield pots.',
+  'Get an elimination with every weapon slot filled.',
+  'Reach top 3 without sprinting unless forced.'
+];
+
 const commands = [
   new SlashCommandBuilder()
     .setName('ping')
@@ -37,7 +70,21 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('rules')
-    .setDescription('Show server rules')
+    .setDescription('Show server rules'),
+
+  new SlashCommandBuilder()
+    .setName('challenge')
+    .setDescription('Get a random Fortnite challenge')
+    .addStringOption(option =>
+      option.setName('difficulty')
+        .setDescription('Choose challenge difficulty')
+        .setRequired(true)
+        .addChoices(
+          { name: 'Easy', value: 'easy' },
+          { name: 'Medium', value: 'medium' },
+          { name: 'Hard', value: 'hard' }
+        )
+    )
 ].map(cmd => cmd.toJSON());
 
 async function registerCommands() {
@@ -80,6 +127,30 @@ client.on(Events.InteractionCreate, async interaction => {
     const mode = interaction.options.getString('mode');
     await interaction.reply(
       `🎮 LFG POST\nMode: ${mode}\nHost: ${interaction.user}`
+    );
+  }
+
+  if (interaction.commandName === 'challenge') {
+    const difficulty = interaction.options.getString('difficulty');
+    let selectedChallenge;
+
+    if (difficulty === 'easy') {
+      selectedChallenge =
+        easyChallenges[Math.floor(Math.random() * easyChallenges.length)];
+    }
+
+    if (difficulty === 'medium') {
+      selectedChallenge =
+        mediumChallenges[Math.floor(Math.random() * mediumChallenges.length)];
+    }
+
+    if (difficulty === 'hard') {
+      selectedChallenge =
+        hardChallenges[Math.floor(Math.random() * hardChallenges.length)];
+    }
+
+    await interaction.reply(
+      `🎯 **Fortnite Challenge**\nDifficulty: **${difficulty}**\nChallenge: **${selectedChallenge}**`
     );
   }
 });
