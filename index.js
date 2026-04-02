@@ -7,11 +7,13 @@ const {
   REST,
   Routes,
   SlashCommandBuilder,
-  EmbedBuilder,
   ActionRowBuilder,
   ButtonBuilder,
-  ButtonStyle
+  ButtonStyle,
+  EmbedBuilder
 } = require('discord.js');
+
+const fs = require('fs');
 
 const client = new Client({
   intents: [
@@ -20,95 +22,45 @@ const client = new Client({
   ]
 });
 
+let data = {};
+
+if (fs.existsSync('data.json')) {
+  data = JSON.parse(fs.readFileSync('data.json', 'utf8'));
+}
+
+function saveData() {
+  fs.writeFileSync('data.json', JSON.stringify(data, null, 2));
+}
+
 const challenges = {
   easy: [
-    'Only use green weapons or lower.',
-    'Land at a named POI and survive for 5 minutes.',
-    'Get 1 elimination with an SMG.',
-    'Open 5 ammo boxes in one match.',
-    'Break 10 structures with your pickaxe.',
-    'Use 2 healing items in one game.',
-    'Reach top 25 without using a vehicle.',
-    'Loot 3 chests before your first fight.',
-    'Travel 500 meters on foot only.',
-    'Revive or reboot a teammate once.'
+    'Get 1 elimination',
+    'Open 5 chests',
+    'Survive 5 minutes',
+    'Use 2 healing items in one match',
+    'Break 10 objects with your pickaxe'
   ],
   medium: [
-    'Get 3 eliminations in one match.',
-    'Use no heals until after your first fight.',
-    'Only carry 3 weapons for the whole game.',
-    'Reach top 10 while carrying at least 500 wood.',
-    'Win a fight using only ARs and shotguns.',
-    'Land hot and survive until top 15.',
-    'Get an elimination from high ground.',
-    'Travel across 3 named POIs in one match.',
-    'Use only floor loot for the whole game.',
-    'Get 2 eliminations without reloading mid-fight.'
+    'Get 3 eliminations',
+    'Reach top 10',
+    'Travel through 3 POIs',
+    'Win a fight using only AR and shotgun',
+    'Use no heals until after your first fight'
   ],
   hard: [
-    'Get 5 eliminations in one match.',
-    'No shields allowed for the whole game.',
-    'Land at the busiest POI and reach top 5.',
-    'Only use loot from your first building.',
-    'Win without using medkits or shield pots.',
-    'Reach top 3 without sprinting unless forced.',
-    'Use only one weapon type for the entire match.',
-    'Get an elimination with every weapon slot filled.',
-    'Win using only blue weapons or lower.',
-    'No healing at all until top 10.'
+    'Get 5 eliminations',
+    'Win a match',
+    'No heals entire game',
+    'Only use loot from your first building',
+    'Reach top 3 without using shields'
   ]
 };
 
-const difficultyStyles = {
-  easy: {
-    title: 'Easy Fortnite Challenge',
-    color: 0x57F287,
-    emoji: '🟢'
-  },
-  medium: {
-    title: 'Medium Fortnite Challenge',
-    color: 0xFEE75C,
-    emoji: '🟡'
-  },
-  hard: {
-    title: 'Hard Fortnite Challenge',
-    color: 0xED4245,
-    emoji: '🔴'
-  }
+const pointsMap = {
+  easy: 10,
+  medium: 25,
+  hard: 50
 };
-
-function getRandomChallenge(difficulty) {
-  const list = challenges[difficulty];
-  return list[Math.floor(Math.random() * list.length)];
-}
-
-function buildChallengeEmbed(difficulty, challenge, username) {
-  const style = difficultyStyles[difficulty];
-
-  return new EmbedBuilder()
-    .setTitle(`${style.emoji} ${style.title}`)
-    .setColor(style.color)
-    .setDescription(`**Your challenge:**\n${challenge}`)
-    .addFields(
-      { name: 'Difficulty', value: difficulty.toUpperCase(), inline: true },
-      { name: 'Requested by', value: username, inline: true }
-    )
-    .setFooter({ text: 'Press reroll for a different challenge' })
-    .setTimestamp();
-}
-
-function buildChallengeButtons(difficulty) {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`reroll_${difficulty}`)
-      .setLabel('Reroll Challenge')
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setCustomId(`complete_${difficulty}`)
-      .setLabel('Completed It')
-      .setStyle(ButtonStyle.Success)
-  );
-}
 
 const commands = [
   new SlashCommandBuilder()
@@ -124,7 +76,7 @@ const commands = [
     .setDescription('Find Fortnite teammates')
     .addStringOption(option =>
       option.setName('mode')
-        .setDescription('Game mode')
+        .setDescription('Choose a mode')
         .setRequired(true)
         .addChoices(
           { name: 'Battle Royale', value: 'Battle Royale' },
@@ -134,19 +86,32 @@ const commands = [
     ),
 
   new SlashCommandBuilder()
+    .setName('setepic')
+    .setDescription('Set your Fortnite username')
+    .addStringOption(option =>
+      option.setName('username')
+        .setDescription('Your Epic username')
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
     .setName('challenge')
-    .setDescription('Get a random Fortnite challenge')
+    .setDescription('Get a Fortnite challenge')
     .addStringOption(option =>
       option.setName('difficulty')
-        .setDescription('Choose a difficulty')
+        .setDescription('Choose difficulty')
         .setRequired(true)
         .addChoices(
           { name: 'Easy', value: 'easy' },
           { name: 'Medium', value: 'medium' },
           { name: 'Hard', value: 'hard' }
         )
-    )
-].map(cmd => cmd.toJSON());
+    ),
+
+  new SlashCommandBuilder()
+    .setName('leaderboard')
+    .setDescription('Show the challenge leaderboard')
+].map(command => command.toJSON());
 
 async function registerCommands() {
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -165,7 +130,11 @@ client.once(Events.ClientReady, async () => {
 });
 
 client.on(Events.GuildMemberAdd, member => {
-  const channel = member.guild.channels.cache.find(c => c.name === 'general-chat');
+  const channel =
+    member.guild.channels.cache.find(c => c.name === 'general') ||
+    member.guild.channels.cache.find(c => c.name === 'general-chat') ||
+    member.guild.systemChannel;
+
   if (channel) {
     channel.send(`Welcome ${member} to Crash & Play Lounge! 🎮`);
   }
@@ -173,6 +142,17 @@ client.on(Events.GuildMemberAdd, member => {
 
 client.on(Events.InteractionCreate, async interaction => {
   if (interaction.isChatInputCommand()) {
+    const userId = interaction.user.id;
+
+    if (!data[userId]) {
+      data[userId] = {
+        points: 0,
+        epic: null,
+        active: null,
+        activeText: null
+      };
+    }
+
     if (interaction.commandName === 'ping') {
       await interaction.reply('Bot is online 🔥');
       return;
@@ -180,7 +160,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
     if (interaction.commandName === 'rules') {
       await interaction.reply(
-        'Be respectful, no cheating talk, no spam, use correct channels, have fun!'
+        'Be respectful, no cheating talk, no spam, use the correct channels, and have fun.'
       );
       return;
     }
@@ -190,10 +170,10 @@ client.on(Events.InteractionCreate, async interaction => {
 
       const embed = new EmbedBuilder()
         .setTitle('🎮 LFG Post')
-        .setColor(0x5865F2)
+        .setDescription(`${interaction.user} is looking for players`)
         .addFields(
           { name: 'Mode', value: mode, inline: true },
-          { name: 'Host', value: `${interaction.user}`, inline: true }
+          { name: 'Host', value: interaction.user.tag, inline: true }
         )
         .setTimestamp();
 
@@ -201,54 +181,104 @@ client.on(Events.InteractionCreate, async interaction => {
       return;
     }
 
-    if (interaction.commandName === 'challenge') {
-      const difficulty = interaction.options.getString('difficulty');
-      const challenge = getRandomChallenge(difficulty);
+    if (interaction.commandName === 'setepic') {
+      const username = interaction.options.getString('username');
+      data[userId].epic = username;
+      saveData();
 
-      const embed = buildChallengeEmbed(
-        difficulty,
-        challenge,
-        interaction.user.username
+      await interaction.reply(`✅ Your Epic username is now set to **${username}**`);
+      return;
+    }
+
+    if (interaction.commandName === 'challenge') {
+      if (!data[userId].epic) {
+        await interaction.reply({
+          content: '❌ You must set your Epic username first using `/setepic`',
+          ephemeral: true
+        });
+        return;
+      }
+
+      const difficulty = interaction.options.getString('difficulty');
+      const list = challenges[difficulty];
+      const challengeText = list[Math.floor(Math.random() * list.length)];
+
+      data[userId].active = difficulty;
+      data[userId].activeText = challengeText;
+      saveData();
+
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('complete')
+          .setLabel('Completed')
+          .setStyle(ButtonStyle.Success)
       );
 
-      const buttons = buildChallengeButtons(difficulty);
+      const embed = new EmbedBuilder()
+        .setTitle('🎯 Fortnite Challenge')
+        .setDescription(`**${challengeText}**`)
+        .addFields(
+          { name: 'Difficulty', value: difficulty.toUpperCase(), inline: true },
+          { name: 'Epic', value: data[userId].epic, inline: true },
+          { name: 'Points', value: `${pointsMap[difficulty]}`, inline: true }
+        )
+        .setTimestamp();
 
       await interaction.reply({
         embeds: [embed],
-        components: [buttons]
+        components: [row]
       });
+      return;
+    }
+
+    if (interaction.commandName === 'leaderboard') {
+      const sorted = Object.entries(data)
+        .sort((a, b) => b[1].points - a[1].points)
+        .slice(0, 10);
+
+      if (sorted.length === 0) {
+        await interaction.reply('No leaderboard data yet.');
+        return;
+      }
+
+      let text = '🏆 **Leaderboard**\n\n';
+
+      sorted.forEach((entry, index) => {
+        const userIdFromData = entry[0];
+        const userData = entry[1];
+        const discordUser = client.users.cache.get(userIdFromData);
+
+        text += `${index + 1}. ${userData.epic || 'Not Set'} (${discordUser?.tag || 'Unknown'}) — ${userData.points} pts\n`;
+      });
+
+      await interaction.reply(text);
       return;
     }
   }
 
   if (interaction.isButton()) {
-    if (interaction.customId.startsWith('reroll_')) {
-      const difficulty = interaction.customId.split('_')[1];
-      const challenge = getRandomChallenge(difficulty);
+    if (interaction.customId === 'complete') {
+      const userId = interaction.user.id;
 
-      const embed = buildChallengeEmbed(
-        difficulty,
-        challenge,
-        interaction.user.username
+      if (!data[userId] || !data[userId].active) {
+        await interaction.reply({
+          content: '❌ You do not have an active challenge.',
+          ephemeral: true
+        });
+        return;
+      }
+
+      const difficulty = data[userId].active;
+      const points = pointsMap[difficulty];
+
+      data[userId].points += points;
+      data[userId].active = null;
+      data[userId].activeText = null;
+      saveData();
+
+      await interaction.reply(
+        `🔥 ${interaction.user} completed their challenge and earned **${points} points!**`
       );
-
-      const buttons = buildChallengeButtons(difficulty);
-
-      await interaction.update({
-        embeds: [embed],
-        components: [buttons]
-      });
-      return;
-    }
-
-    if (interaction.customId.startsWith('complete_')) {
-      const difficulty = interaction.customId.split('_')[1];
-      const style = difficultyStyles[difficulty];
-
-      await interaction.reply({
-        content: `${style.emoji} ${interaction.user} completed a **${difficulty}** challenge!`,
-        ephemeral: false
-      });
     }
   }
 });
