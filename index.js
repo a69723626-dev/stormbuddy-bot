@@ -3,95 +3,58 @@ require('dotenv').config();
 const {
   Client,
   GatewayIntentBits,
-  Events,
+  SlashCommandBuilder,
   REST,
   Routes,
-  SlashCommandBuilder,
+  EmbedBuilder,
   ActionRowBuilder,
   ButtonBuilder,
-  ButtonStyle,
-  EmbedBuilder
+  ButtonStyle
 } = require('discord.js');
 
-const fs = require('fs');
-
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers
-  ]
+  intents: [GatewayIntentBits.Guilds]
 });
 
-let data = {};
+const TOKEN = process.env.DISCORD_TOKEN;
+const CLIENT_ID = process.env.CLIENT_ID;
+const GUILD_ID = process.env.GUILD_ID;
 
-if (fs.existsSync('data.json')) {
-  data = JSON.parse(fs.readFileSync('data.json', 'utf8'));
-}
+let users = {}; // stores epic + points + challenges
 
-function saveData() {
-  fs.writeFileSync('data.json', JSON.stringify(data, null, 2));
-}
-
+// 🎯 CHALLENGES
 const challenges = {
   easy: [
-    'Get 1 elimination',
-    'Open 5 chests',
-    'Survive 5 minutes',
-    'Use 2 healing items in one match',
-    'Break 10 objects with your pickaxe'
+    { text: "Get 1 elimination", points: 10 },
+    { text: "Open 5 chests", points: 10 }
   ],
   medium: [
-    'Get 3 eliminations',
-    'Reach top 10',
-    'Travel through 3 POIs',
-    'Win a fight using only AR and shotgun',
-    'Use no heals until after your first fight'
+    { text: "Win a fight using only AR + shotgun", points: 25 },
+    { text: "Get 5 eliminations", points: 25 }
   ],
   hard: [
-    'Get 5 eliminations',
-    'Win a match',
-    'No heals entire game',
-    'Only use loot from your first building',
-    'Reach top 3 without using shields'
+    { text: "Win the game", points: 50 },
+    { text: "Get 10 eliminations in one match", points: 50 }
   ]
 };
 
-const pointsMap = {
-  easy: 10,
-  medium: 25,
-  hard: 50
-};
-
-function makeChallengeId() {
-  return `${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
-}
-
-function getRandomChallenge(difficulty, lastCompletedText = null) {
-  const list = challenges[difficulty];
-
-  if (!list || list.length === 0) return null;
-  if (list.length === 1) return list[0];
-
-  let filtered = list;
-
-  if (lastCompletedText) {
-    filtered = list.filter(ch => ch !== lastCompletedText);
-    if (filtered.length === 0) filtered = list;
-  }
-
-  return filtered[Math.floor(Math.random() * filtered.length)];
-}
-
+// 🔧 COMMANDS
 const commands = [
-  new SlashCommandBuilder().setName('ping').setDescription('Check bot'),
+  new SlashCommandBuilder()
+    .setName('ping')
+    .setDescription('Check bot'),
 
-  new SlashCommandBuilder().setName('rules').setDescription('Show rules'),
+  new SlashCommandBuilder()
+    .setName('rules')
+    .setDescription('Show rules'),
 
   new SlashCommandBuilder()
     .setName('lfg')
     .setDescription('Find teammates')
     .addStringOption(option =>
-      option.setName('mode')
+      option
+        .setName('mode')
+        .setDescription('Choose a mode')
         .setRequired(true)
         .addChoices(
           { name: 'Battle Royale', value: 'Battle Royale' },
@@ -104,14 +67,19 @@ const commands = [
     .setName('setepic')
     .setDescription('Set Epic username')
     .addStringOption(option =>
-      option.setName('username').setRequired(true)
+      option
+        .setName('username')
+        .setDescription('Your Epic username')
+        .setRequired(true)
     ),
 
   new SlashCommandBuilder()
     .setName('challenge')
-    .setDescription('Get challenge')
+    .setDescription('Get a Fortnite challenge')
     .addStringOption(option =>
-      option.setName('difficulty')
+      option
+        .setName('difficulty')
+        .setDescription('Choose difficulty')
         .setRequired(true)
         .addChoices(
           { name: 'Easy', value: 'easy' },
@@ -122,180 +90,168 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('leaderboard')
-    .setDescription('Show leaderboard')
+    .setDescription('View leaderboard')
 ].map(c => c.toJSON());
 
-async function registerCommands() {
-  const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+// 🚀 REGISTER COMMANDS
+const rest = new REST({ version: '10' }).setToken(TOKEN);
 
-  await rest.put(
-    Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID),
-    { body: commands }
-  );
-
-  console.log('Commands registered');
-}
-
-client.once(Events.ClientReady, async () => {
-  console.log(`Logged in as ${client.user.tag}`);
-  await registerCommands();
-});
-
-client.on(Events.GuildMemberAdd, member => {
-  const channel = member.guild.systemChannel;
-  if (channel) {
-    channel.send(`Welcome ${member} 🎮`);
+(async () => {
+  try {
+    console.log('Registering commands...');
+    await rest.put(
+      Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
+      { body: commands }
+    );
+    console.log('Commands registered!');
+  } catch (err) {
+    console.error(err);
   }
+})();
+
+// 🎮 BOT READY
+client.once('ready', () => {
+  console.log(`Logged in as ${client.user.tag}`);
 });
 
-client.on(Events.InteractionCreate, async interaction => {
+// 🎯 INTERACTIONS
+client.on('interactionCreate', async interaction => {
   if (interaction.isChatInputCommand()) {
-    const userId = interaction.user.id;
+    const { commandName, user } = interaction;
 
-    if (!data[userId]) {
-      data[userId] = {
-        points: 0,
-        epic: null,
-        active: null,
-        activeText: null,
-        activeId: null,
-        lastCompleted: {
-          easy: null,
-          medium: null,
-          hard: null
-        }
-      };
+    // 🔹 PING
+    if (commandName === 'ping') {
+      return interaction.reply('🏓 Pong!');
     }
 
-    if (interaction.commandName === 'ping') {
-      return interaction.reply('Bot is online 🔥');
+    // 🔹 RULES
+    if (commandName === 'rules') {
+      return interaction.reply('📜 Be respectful. No toxicity. Have fun!');
     }
 
-    if (interaction.commandName === 'rules') {
-      return interaction.reply('Be respectful, no spam, have fun.');
-    }
-
-    if (interaction.commandName === 'lfg') {
+    // 🔹 LFG
+    if (commandName === 'lfg') {
       const mode = interaction.options.getString('mode');
-
-      const embed = new EmbedBuilder()
-        .setTitle('🎮 LFG')
-        .setDescription(`${interaction.user}`)
-        .addFields(
-          { name: 'Mode', value: mode },
-          { name: 'Host', value: interaction.user.tag }
-        );
-
-      return interaction.reply({ embeds: [embed] });
+      return interaction.reply(`🎮 ${user.username} is looking for teammates in **${mode}**!`);
     }
 
-    if (interaction.commandName === 'setepic') {
+    // 🔹 SET EPIC
+    if (commandName === 'setepic') {
       const username = interaction.options.getString('username');
-      data[userId].epic = username;
-      saveData();
 
-      return interaction.reply(`✅ Set to **${username}**`);
+      if (!users[user.id]) {
+        users[user.id] = { epic: "", points: 0, activeChallenges: {} };
+      }
+
+      users[user.id].epic = username;
+
+      return interaction.reply(`✅ Your Epic username is now set to **${username}**`);
     }
 
-    if (interaction.commandName === 'challenge') {
-      if (!data[userId].epic) {
+    // 🔹 CHALLENGE
+    if (commandName === 'challenge') {
+      const difficulty = interaction.options.getString('difficulty');
+
+      if (!users[user.id] || !users[user.id].epic) {
         return interaction.reply({
-          content: '❌ Use /setepic first',
+          content: '❌ You must link your Epic first using `/setepic`',
           ephemeral: true
         });
       }
 
-      const difficulty = interaction.options.getString('difficulty');
-      const last = data[userId].lastCompleted[difficulty];
+      if (!users[user.id].activeChallenges) {
+        users[user.id].activeChallenges = {};
+      }
 
-      const challengeText = getRandomChallenge(difficulty, last);
-      const id = makeChallengeId();
+      const completed = users[user.id].completed || [];
 
-      data[userId].active = difficulty;
-      data[userId].activeText = challengeText;
-      data[userId].activeId = id;
-      saveData();
-
-      const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`complete_${id}`)
-          .setLabel('Mark Complete')
-          .setStyle(ButtonStyle.Success)
+      // pick a NEW challenge not completed
+      const available = challenges[difficulty].filter(
+        c => !completed.includes(c.text)
       );
+
+      if (available.length === 0) {
+        return interaction.reply("🏆 You've completed all challenges in this difficulty!");
+      }
+
+      const challenge = available[Math.floor(Math.random() * available.length)];
+
+      users[user.id].activeChallenges[difficulty] = challenge;
 
       const embed = new EmbedBuilder()
         .setTitle('🎯 Fortnite Challenge')
-        .setDescription(`**${challengeText}**`)
+        .setDescription(challenge.text)
         .addFields(
-          { name: 'Difficulty', value: difficulty.toUpperCase() },
-          { name: 'Epic', value: data[userId].epic },
-          { name: 'Points', value: `${pointsMap[difficulty]}` }
-        );
+          { name: 'Difficulty', value: difficulty.toUpperCase(), inline: true },
+          { name: 'Epic', value: users[user.id].epic, inline: true },
+          { name: 'Points', value: `${challenge.points}`, inline: true }
+        )
+        .setColor('Purple');
+
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`complete_${difficulty}`)
+          .setLabel('Completed')
+          .setStyle(ButtonStyle.Success)
+      );
 
       return interaction.reply({ embeds: [embed], components: [row] });
     }
 
-    if (interaction.commandName === 'leaderboard') {
-      const sorted = Object.entries(data)
+    // 🔹 LEADERBOARD
+    if (commandName === 'leaderboard') {
+      const sorted = Object.entries(users)
         .sort((a, b) => b[1].points - a[1].points)
         .slice(0, 10);
 
-      let text = '🏆 Leaderboard\n\n';
+      if (sorted.length === 0) {
+        return interaction.reply("📉 No leaderboard yet.");
+      }
 
-      sorted.forEach((entry, i) => {
-        const u = entry[1];
-        const discord = client.users.cache.get(entry[0]);
+      let desc = "";
 
-        text += `${i + 1}. ${u.epic} (${discord?.tag}) — ${u.points} pts\n`;
+      sorted.forEach(([id, data], i) => {
+        desc += `**${i + 1}. ${data.epic}** (${client.users.cache.get(id)?.username || "Unknown"}) — ${data.points} pts\n`;
       });
 
-      return interaction.reply(text);
+      const embed = new EmbedBuilder()
+        .setTitle('🏆 Leaderboard')
+        .setDescription(desc)
+        .setColor('Gold');
+
+      return interaction.reply({ embeds: [embed] });
     }
   }
 
+  // 🔘 BUTTON CLICK
   if (interaction.isButton()) {
     const userId = interaction.user.id;
+    const difficulty = interaction.customId.split('_')[1];
 
-    if (!data[userId] || !data[userId].activeId) {
-      return interaction.reply({
-        content: '❌ No active challenge',
-        ephemeral: true
-      });
+    const userData = users[userId];
+
+    if (!userData || !userData.activeChallenges[difficulty]) {
+      return interaction.reply({ content: "❌ No active challenge.", ephemeral: true });
     }
 
-    if (interaction.customId !== `complete_${data[userId].activeId}`) {
-      return interaction.reply({
-        content: '❌ Old button',
-        ephemeral: true
-      });
+    const challenge = userData.activeChallenges[difficulty];
+
+    if (!userData.completed) userData.completed = [];
+
+    if (!userData.completed.includes(challenge.text)) {
+      userData.completed.push(challenge.text);
+      userData.points += challenge.points;
     }
 
-    const difficulty = data[userId].active;
-    const points = pointsMap[difficulty];
-
-    data[userId].points += points;
-    data[userId].lastCompleted[difficulty] = data[userId].activeText;
-
-    data[userId].active = null;
-    data[userId].activeText = null;
-    data[userId].activeId = null;
-
-    saveData();
-
-    const disabledRow = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId('done')
-        .setLabel('Challenge Completed')
-        .setStyle(ButtonStyle.Success)
-        .setDisabled(true)
-    );
+    delete userData.activeChallenges[difficulty];
 
     return interaction.update({
-      content: `🔥 +${points} points`,
+      content: `✅ Challenge completed! +${challenge.points} points`,
       embeds: [],
-      components: [disabledRow]
+      components: []
     });
   }
 });
 
-client.login(process.env.DISCORD_TOKEN);
+// 🔐 LOGIN
+client.login(TOKEN);
