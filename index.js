@@ -20,25 +20,32 @@ const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 
-let users = {}; // stores epic + points + challenges
+let users = {};
 
-// 🎯 CHALLENGES
 const challenges = {
   easy: [
-    { text: "Get 1 elimination", points: 10 },
-    { text: "Open 5 chests", points: 10 }
+    { text: 'Get 1 elimination', points: 10 },
+    { text: 'Open 5 chests', points: 10 },
+    { text: 'Survive 5 minutes', points: 10 },
+    { text: 'Use 2 healing items in one match', points: 10 },
+    { text: 'Break 10 objects with your pickaxe', points: 10 }
   ],
   medium: [
-    { text: "Win a fight using only AR + shotgun", points: 25 },
-    { text: "Get 5 eliminations", points: 25 }
+    { text: 'Win a fight using only AR + shotgun', points: 25 },
+    { text: 'Get 5 eliminations', points: 25 },
+    { text: 'Reach top 10', points: 25 },
+    { text: 'Travel through 3 POIs', points: 25 },
+    { text: 'Use no heals until after your first fight', points: 25 }
   ],
   hard: [
-    { text: "Win the game", points: 50 },
-    { text: "Get 10 eliminations in one match", points: 50 }
+    { text: 'Win the game', points: 50 },
+    { text: 'Get 10 eliminations in one match', points: 50 },
+    { text: 'No heals entire game', points: 50 },
+    { text: 'Only use loot from your first building', points: 50 },
+    { text: 'Reach top 3 without using shields', points: 50 }
   ]
 };
 
-// 🔧 COMMANDS
 const commands = [
   new SlashCommandBuilder()
     .setName('ping')
@@ -93,7 +100,6 @@ const commands = [
     .setDescription('View leaderboard')
 ].map(c => c.toJSON());
 
-// 🚀 REGISTER COMMANDS
 const rest = new REST({ version: '10' }).setToken(TOKEN);
 
 (async () => {
@@ -109,38 +115,32 @@ const rest = new REST({ version: '10' }).setToken(TOKEN);
   }
 })();
 
-// 🎮 BOT READY
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
 
-// 🎯 INTERACTIONS
 client.on('interactionCreate', async interaction => {
   if (interaction.isChatInputCommand()) {
     const { commandName, user } = interaction;
 
-    // 🔹 PING
     if (commandName === 'ping') {
       return interaction.reply('🏓 Pong!');
     }
 
-    // 🔹 RULES
     if (commandName === 'rules') {
       return interaction.reply('📜 Be respectful. No toxicity. Have fun!');
     }
 
-    // 🔹 LFG
     if (commandName === 'lfg') {
       const mode = interaction.options.getString('mode');
       return interaction.reply(`🎮 ${user.username} is looking for teammates in **${mode}**!`);
     }
 
-    // 🔹 SET EPIC
     if (commandName === 'setepic') {
       const username = interaction.options.getString('username');
 
       if (!users[user.id]) {
-        users[user.id] = { epic: "", points: 0, activeChallenges: {} };
+        users[user.id] = { epic: '', points: 0, activeChallenges: {}, completed: [] };
       }
 
       users[user.id].epic = username;
@@ -148,7 +148,6 @@ client.on('interactionCreate', async interaction => {
       return interaction.reply(`✅ Your Epic username is now set to **${username}**`);
     }
 
-    // 🔹 CHALLENGE
     if (commandName === 'challenge') {
       const difficulty = interaction.options.getString('difficulty');
 
@@ -163,9 +162,12 @@ client.on('interactionCreate', async interaction => {
         users[user.id].activeChallenges = {};
       }
 
-      const completed = users[user.id].completed || [];
+      if (!users[user.id].completed) {
+        users[user.id].completed = [];
+      }
 
-      // pick a NEW challenge not completed
+      const completed = users[user.id].completed;
+
       const available = challenges[difficulty].filter(
         c => !completed.includes(c.text)
       );
@@ -191,27 +193,27 @@ client.on('interactionCreate', async interaction => {
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId(`complete_${difficulty}`)
-          .setLabel('Completed')
+          .setLabel('Mark Complete')
           .setStyle(ButtonStyle.Success)
       );
 
       return interaction.reply({ embeds: [embed], components: [row] });
     }
 
-    // 🔹 LEADERBOARD
     if (commandName === 'leaderboard') {
       const sorted = Object.entries(users)
         .sort((a, b) => b[1].points - a[1].points)
         .slice(0, 10);
 
       if (sorted.length === 0) {
-        return interaction.reply("📉 No leaderboard yet.");
+        return interaction.reply('📉 No leaderboard yet.');
       }
 
-      let desc = "";
+      let desc = '';
 
       sorted.forEach(([id, data], i) => {
-        desc += `**${i + 1}. ${data.epic}** (${client.users.cache.get(id)?.username || "Unknown"}) — ${data.points} pts\n`;
+        const discordName = client.users.cache.get(id)?.username || 'Unknown';
+        desc += `**${i + 1}. ${data.epic}** (${discordName}) — ${data.points} pts\n`;
       });
 
       const embed = new EmbedBuilder()
@@ -223,20 +225,23 @@ client.on('interactionCreate', async interaction => {
     }
   }
 
-  // 🔘 BUTTON CLICK
   if (interaction.isButton()) {
     const userId = interaction.user.id;
     const difficulty = interaction.customId.split('_')[1];
-
     const userData = users[userId];
 
-    if (!userData || !userData.activeChallenges[difficulty]) {
-      return interaction.reply({ content: "❌ No active challenge.", ephemeral: true });
+    if (!userData || !userData.activeChallenges || !userData.activeChallenges[difficulty]) {
+      return interaction.reply({
+        content: '❌ No active challenge.',
+        ephemeral: true
+      });
     }
 
     const challenge = userData.activeChallenges[difficulty];
 
-    if (!userData.completed) userData.completed = [];
+    if (!userData.completed) {
+      userData.completed = [];
+    }
 
     if (!userData.completed.includes(challenge.text)) {
       userData.completed.push(challenge.text);
@@ -245,13 +250,24 @@ client.on('interactionCreate', async interaction => {
 
     delete userData.activeChallenges[difficulty];
 
+    const disabledRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('done')
+        .setLabel('Challenge Completed')
+        .setStyle(ButtonStyle.Success)
+        .setDisabled(true)
+    );
+
     return interaction.update({
-      content: `✅ Challenge completed! +${challenge.points} points`,
-      embeds: [],
-      components: []
+      embeds: [
+        new EmbedBuilder()
+          .setTitle('✅ Challenge Completed')
+          .setDescription(`You earned **${challenge.points}** points for:\n${challenge.text}`)
+          .setColor('Green')
+      ],
+      components: [disabledRow]
     });
   }
 });
 
-// 🔐 LOGIN
 client.login(TOKEN);
