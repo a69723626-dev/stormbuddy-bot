@@ -250,6 +250,22 @@ const commands = [
         .setName('points')
         .setDescription('How many points this difficulty should give')
         .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName('setuserpoints')
+    .setDescription('Set a user’s leaderboard points')
+    .addUserOption(option =>
+      option
+        .setName('user')
+        .setDescription('The user whose points you want to set')
+        .setRequired(true)
+    )
+    .addIntegerOption(option =>
+      option
+        .setName('points')
+        .setDescription('The exact number of points to set')
+        .setRequired(true)
     )
 ].map(c => c.toJSON());
 
@@ -352,6 +368,37 @@ client.on(Events.InteractionCreate, async interaction => {
         return;
       }
 
+      if (interaction.commandName === 'setuserpoints') {
+        if (
+          !interaction.member.permissions.has(PermissionsBitField.Flags.Administrator) &&
+          !interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild)
+        ) {
+          await interaction.reply({
+            content: '❌ Only admins or mods can use this.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        const targetUser = interaction.options.getUser('user');
+        const points = interaction.options.getInteger('points');
+
+        if (points < 0) {
+          await interaction.reply({
+            content: '❌ Points cannot be negative.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        const targetUserData = ensureUser(targetUser.id);
+        targetUserData.points = points;
+        saveData();
+
+        await interaction.reply(`✅ **${targetUser.tag}** now has **${points}** points.`);
+        return;
+      }
+
       if (interaction.commandName === 'challenge') {
         if (!userData.epic) {
           await interaction.reply({
@@ -411,11 +458,13 @@ client.on(Events.InteractionCreate, async interaction => {
 
         let desc = '';
 
-        sorted.forEach(([id, user], index) => {
-          const discordName = client.users.cache.get(id)?.username || 'Unknown';
+        for (let index = 0; index < sorted.length; index++) {
+          const [id, user] = sorted[index];
+          const discordUser = await client.users.fetch(id).catch(() => null);
+          const discordName = discordUser?.username || 'Unknown';
           const epicName = user.epic || 'Not set';
           desc += `**${index + 1}. ${epicName}** (${discordName}) — ${user.points || 0} pts\n`;
-        });
+        }
 
         const embed = new EmbedBuilder()
           .setTitle('🏆 Leaderboard')
