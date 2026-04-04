@@ -443,6 +443,8 @@ client.on(Events.InteractionCreate, async interaction => {
           return;
         }
 
+        const targetUser = await client.users.fetch(userId).catch(() => null);
+
         if (action === 'approve') {
           const challenge = userData.activeChallenge;
 
@@ -470,10 +472,33 @@ client.on(Events.InteractionCreate, async interaction => {
             components: [buildReviewButtons(userId, challengeId, true)]
           });
 
+          if (targetUser) {
+            const dmEmbed = new EmbedBuilder()
+              .setTitle('✅ Your challenge was approved')
+              .setColor('Green')
+              .setDescription(`Your proof was approved in **Crash & Play Lounge**.`)
+              .addFields(
+                { name: 'Challenge', value: challenge.text, inline: false },
+                { name: 'Difficulty', value: challenge.difficulty.toUpperCase(), inline: true },
+                { name: 'Points Earned', value: `${challenge.points}`, inline: true },
+                { name: 'Total Points', value: `${userData.points}`, inline: true }
+              )
+              .setFooter({ text: `Approved by ${interaction.user.tag}` })
+              .setTimestamp();
+
+            await targetUser.send({ embeds: [dmEmbed] }).catch(() => null);
+          }
+
           return;
         }
 
         if (action === 'reject') {
+          const rejectedChallenge = {
+            text: userData.activeChallenge.text,
+            difficulty: userData.activeChallenge.difficulty,
+            points: userData.activeChallenge.points
+          };
+
           userData.activeChallenge.status = 'active';
           userData.activeChallenge.proofLink = null;
           userData.activeChallenge.proofNote = null;
@@ -494,6 +519,22 @@ client.on(Events.InteractionCreate, async interaction => {
             embeds: [rejectedEmbed],
             components: [buildReviewButtons(userId, challengeId, true)]
           });
+
+          if (targetUser) {
+            const dmEmbed = new EmbedBuilder()
+              .setTitle('❌ Your challenge proof was rejected')
+              .setColor('Red')
+              .setDescription(`Your proof was rejected in **Crash & Play Lounge**. You can submit proof again.`)
+              .addFields(
+                { name: 'Challenge', value: rejectedChallenge.text, inline: false },
+                { name: 'Difficulty', value: rejectedChallenge.difficulty.toUpperCase(), inline: true },
+                { name: 'Points', value: `${rejectedChallenge.points}`, inline: true }
+              )
+              .setFooter({ text: `Rejected by ${interaction.user.tag}` })
+              .setTimestamp();
+
+            await targetUser.send({ embeds: [dmEmbed] }).catch(() => null);
+          }
 
           return;
         }
@@ -553,10 +594,14 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       const botMember = await interaction.guild.members.fetchMe();
-
       const perms = reviewChannel.permissionsFor(botMember);
 
-      if (!perms || !perms.has(PermissionsBitField.Flags.ViewChannel) || !perms.has(PermissionsBitField.Flags.SendMessages)) {
+      if (
+        !perms ||
+        !perms.has(PermissionsBitField.Flags.ViewChannel) ||
+        !perms.has(PermissionsBitField.Flags.SendMessages) ||
+        !perms.has(PermissionsBitField.Flags.EmbedLinks)
+      ) {
         await interaction.editReply({
           content: '❌ I do not have permission to send messages in the review channel.'
         });
