@@ -94,6 +94,16 @@ function ensureUser(userId) {
     data.users[userId].activeChallenge = null;
   }
 
+  if (data.users[userId].activeChallenge) {
+    if (!('sourceChannelId' in data.users[userId].activeChallenge)) {
+      data.users[userId].activeChallenge.sourceChannelId = null;
+    }
+
+    if (!('sourceMessageId' in data.users[userId].activeChallenge)) {
+      data.users[userId].activeChallenge.sourceMessageId = null;
+    }
+  }
+
   return data.users[userId];
 }
 
@@ -176,6 +186,32 @@ function buildReviewButtons(userId, challengeId, disabled = false) {
       .setStyle(ButtonStyle.Danger)
       .setDisabled(disabled)
   );
+}
+
+async function updateOriginalChallengeMessage(user, challengeObj, options = {}) {
+  if (!challengeObj?.sourceChannelId || !challengeObj?.sourceMessageId) return;
+
+  try {
+    const channel = await client.channels.fetch(challengeObj.sourceChannelId).catch(() => null);
+    if (!channel || !channel.isTextBased()) return;
+
+    const message = await channel.messages.fetch(challengeObj.sourceMessageId).catch(() => null);
+    if (!message) return;
+
+    await message.edit({
+      content: options.content ?? '',
+      embeds: [buildChallengeEmbed(user, challengeObj)],
+      components: options.components ?? [
+        buildChallengeButtons(
+          challengeObj.id,
+          challengeObj.status === 'pending',
+          challengeObj.status === 'approved'
+        )
+      ]
+    });
+  } catch (err) {
+    console.error('Failed to update original challenge message:', err);
+  }
 }
 
 const commands = [
@@ -562,7 +598,9 @@ client.on(Events.InteractionCreate, async interaction => {
           status: 'active',
           proofLink: null,
           proofNote: null,
-          createdAt: Date.now()
+          createdAt: Date.now(),
+          sourceChannelId: null,
+          sourceMessageId: null
         };
 
         userData.activeChallenge = challengeObj;
@@ -572,6 +610,15 @@ client.on(Events.InteractionCreate, async interaction => {
           embeds: [buildChallengeEmbed(userData, challengeObj)],
           components: [buildChallengeButtons(challengeObj.id)]
         });
+
+        const replyMessage = await interaction.fetchReply().catch(() => null);
+
+        if (replyMessage && userData.activeChallenge && userData.activeChallenge.id === challengeObj.id) {
+          userData.activeChallenge.sourceChannelId = replyMessage.channelId;
+          userData.activeChallenge.sourceMessageId = replyMessage.id;
+          saveData();
+        }
+
         return;
       }
 
@@ -708,6 +755,14 @@ client.on(Events.InteractionCreate, async interaction => {
           }
 
           userData.points += challenge.points;
+          challenge.status = 'approved';
+          saveData();
+
+          await updateOriginalChallengeMessage(userData, challenge, {
+            content: '✅ Challenge approved!',
+            components: [buildChallengeButtons(challenge.id, true, true)]
+          });
+
           userData.activeChallenge = null;
           saveData();
 
@@ -731,7 +786,7 @@ client.on(Events.InteractionCreate, async interaction => {
             const dmEmbed = new EmbedBuilder()
               .setTitle('✅ Your challenge was approved')
               .setColor('Green')
-              .setDescription(`Your proof was approved in **Crash & Play Lounge**.`)
+              .setDescription('Your proof was approved in **Crash & Play Lounge**.')
               .addFields(
                 { name: 'Challenge', value: challenge.text, inline: false },
                 { name: 'Difficulty', value: challenge.difficulty.toUpperCase(), inline: true },
@@ -759,6 +814,11 @@ client.on(Events.InteractionCreate, async interaction => {
           userData.activeChallenge.proofNote = null;
           saveData();
 
+          await updateOriginalChallengeMessage(userData, userData.activeChallenge, {
+            content: '❌ Proof rejected. You can submit proof again.',
+            components: [buildChallengeButtons(userData.activeChallenge.id, false, false)]
+          });
+
           const rejectedEmbed = new EmbedBuilder()
             .setTitle('❌ Challenge Rejected')
             .setColor('Red')
@@ -779,7 +839,7 @@ client.on(Events.InteractionCreate, async interaction => {
             const dmEmbed = new EmbedBuilder()
               .setTitle('❌ Your challenge proof was rejected')
               .setColor('Red')
-              .setDescription(`Your proof was rejected in **Crash & Play Lounge**. You can submit proof again.`)
+              .setDescription('Your proof was rejected in **Crash & Play Lounge**. You can submit proof again.')
               .addFields(
                 { name: 'Challenge', value: rejectedChallenge.text, inline: false },
                 { name: 'Difficulty', value: rejectedChallenge.difficulty.toUpperCase(), inline: true },
@@ -820,6 +880,11 @@ client.on(Events.InteractionCreate, async interaction => {
       userData.activeChallenge.proofLink = proofLink;
       userData.activeChallenge.proofNote = proofNote;
       saveData();
+
+      await updateOriginalChallengeMessage(userData, userData.activeChallenge, {
+        content: '⏳ Proof submitted. Waiting for staff review.',
+        components: [buildChallengeButtons(userData.activeChallenge.id, true, false)]
+      });
 
       let reviewChannel = null;
 
