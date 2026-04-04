@@ -15,7 +15,8 @@ const {
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
-  PermissionsBitField
+  PermissionsBitField,
+  ChannelType
 } = require('discord.js');
 
 const client = new Client({
@@ -535,6 +536,29 @@ client.on(Events.InteractionCreate, async interaction => {
       if (!reviewChannel) {
         await interaction.editReply({
           content: '❌ Could not find the review channel. Check the channel ID and bot permissions.'
+        });
+        return;
+      }
+
+      if (
+        reviewChannel.type !== ChannelType.GuildText &&
+        reviewChannel.type !== ChannelType.PublicThread &&
+        reviewChannel.type !== ChannelType.PrivateThread &&
+        reviewChannel.type !== ChannelType.AnnouncementThread
+      ) {
+        await interaction.editReply({
+          content: '❌ The review channel is not a normal text channel.'
+        });
+        return;
+      }
+
+      const botMember = await interaction.guild.members.fetchMe();
+
+      const perms = reviewChannel.permissionsFor(botMember);
+
+      if (!perms || !perms.has(PermissionsBitField.Flags.ViewChannel) || !perms.has(PermissionsBitField.Flags.SendMessages)) {
+        await interaction.editReply({
+          content: '❌ I do not have permission to send messages in the review channel.'
         });
         return;
       }
