@@ -266,7 +266,43 @@ const commands = [
         .setName('points')
         .setDescription('The exact number of points to set')
         .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName('addpoints')
+    .setDescription('Add points to a user')
+    .addUserOption(option =>
+      option
+        .setName('user')
+        .setDescription('User to give points to')
+        .setRequired(true)
     )
+    .addIntegerOption(option =>
+      option
+        .setName('amount')
+        .setDescription('How many points to add')
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName('removepoints')
+    .setDescription('Remove points from a user')
+    .addUserOption(option =>
+      option
+        .setName('user')
+        .setDescription('User to remove points from')
+        .setRequired(true)
+    )
+    .addIntegerOption(option =>
+      option
+        .setName('amount')
+        .setDescription('How many points to remove')
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName('resetleaderboard')
+    .setDescription('Reset all leaderboard points to 0')
 ].map(c => c.toJSON());
 
 async function registerCommands() {
@@ -396,6 +432,99 @@ client.on(Events.InteractionCreate, async interaction => {
         saveData();
 
         await interaction.reply(`✅ **${targetUser.tag}** now has **${points}** points.`);
+        return;
+      }
+
+      if (interaction.commandName === 'addpoints') {
+        if (
+          !interaction.member.permissions.has(PermissionsBitField.Flags.Administrator) &&
+          !interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild)
+        ) {
+          await interaction.reply({
+            content: '❌ Only admins or mods can use this.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        const targetUser = interaction.options.getUser('user');
+        const amount = interaction.options.getInteger('amount');
+
+        if (amount < 1) {
+          await interaction.reply({
+            content: '❌ Amount must be at least 1.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        const targetUserData = ensureUser(targetUser.id);
+        targetUserData.points += amount;
+        saveData();
+
+        await interaction.reply(
+          `✅ Added **${amount}** points to **${targetUser.tag}**.\nNew total: **${targetUserData.points}**`
+        );
+        return;
+      }
+
+      if (interaction.commandName === 'removepoints') {
+        if (
+          !interaction.member.permissions.has(PermissionsBitField.Flags.Administrator) &&
+          !interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild)
+        ) {
+          await interaction.reply({
+            content: '❌ Only admins or mods can use this.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        const targetUser = interaction.options.getUser('user');
+        const amount = interaction.options.getInteger('amount');
+
+        if (amount < 1) {
+          await interaction.reply({
+            content: '❌ Amount must be at least 1.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        const targetUserData = ensureUser(targetUser.id);
+        targetUserData.points -= amount;
+
+        if (targetUserData.points < 0) {
+          targetUserData.points = 0;
+        }
+
+        saveData();
+
+        await interaction.reply(
+          `❌ Removed **${amount}** points from **${targetUser.tag}**.\nNew total: **${targetUserData.points}**`
+        );
+        return;
+      }
+
+      if (interaction.commandName === 'resetleaderboard') {
+        if (
+          !interaction.member.permissions.has(PermissionsBitField.Flags.Administrator) &&
+          !interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild)
+        ) {
+          await interaction.reply({
+            content: '❌ Only admins or mods can use this.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        for (const id of Object.keys(data.users)) {
+          ensureUser(id).points = 0;
+        }
+
+        saveData();
+
+        await interaction.reply('✅ The leaderboard has been reset. All user points are now **0**.');
         return;
       }
 
