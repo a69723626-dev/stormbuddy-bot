@@ -62,6 +62,26 @@ const pointsMap = {
   hard: 50
 };
 
+function makeChallengeId() {
+  return `${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
+}
+
+function getRandomChallenge(difficulty, lastCompletedText = null) {
+  const list = challenges[difficulty];
+
+  if (!list || list.length === 0) return null;
+  if (list.length === 1) return list[0];
+
+  let filtered = list;
+
+  if (lastCompletedText) {
+    filtered = list.filter(ch => ch !== lastCompletedText);
+    if (filtered.length === 0) filtered = list;
+  }
+
+  return filtered[Math.floor(Math.random() * filtered.length)];
+}
+
 const commands = [
   new SlashCommandBuilder()
     .setName('ping')
@@ -149,7 +169,21 @@ client.on(Events.InteractionCreate, async interaction => {
         points: 0,
         epic: null,
         active: null,
-        activeText: null
+        activeText: null,
+        activeId: null,
+        lastCompleted: {
+          easy: null,
+          medium: null,
+          hard: null
+        }
+      };
+    }
+
+    if (!data[userId].lastCompleted) {
+      data[userId].lastCompleted = {
+        easy: null,
+        medium: null,
+        hard: null
       };
     }
 
@@ -200,16 +234,18 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       const difficulty = interaction.options.getString('difficulty');
-      const list = challenges[difficulty];
-      const challengeText = list[Math.floor(Math.random() * list.length)];
+      const lastCompletedText = data[userId].lastCompleted[difficulty];
+      const challengeText = getRandomChallenge(difficulty, lastCompletedText);
+      const challengeId = makeChallengeId();
 
       data[userId].active = difficulty;
       data[userId].activeText = challengeText;
+      data[userId].activeId = challengeId;
       saveData();
 
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
-          .setCustomId('complete')
+          .setCustomId(`complete_${challengeId}`)
           .setLabel('Completed')
           .setStyle(ButtonStyle.Success)
       );
@@ -257,29 +293,50 @@ client.on(Events.InteractionCreate, async interaction => {
   }
 
   if (interaction.isButton()) {
-    if (interaction.customId === 'complete') {
-      const userId = interaction.user.id;
+    const userId = interaction.user.id;
 
-      if (!data[userId] || !data[userId].active) {
-        await interaction.reply({
-          content: '❌ You do not have an active challenge.',
-          ephemeral: true
-        });
-        return;
-      }
-
-      const difficulty = data[userId].active;
-      const points = pointsMap[difficulty];
-
-      data[userId].points += points;
-      data[userId].active = null;
-      data[userId].activeText = null;
-      saveData();
-
-      await interaction.reply(
-        `🔥 ${interaction.user} completed their challenge and earned **${points} points!**`
-      );
+    if (!data[userId] || !data[userId].active || !data[userId].activeId) {
+      await interaction.reply({
+        content: '❌ You do not have an active challenge.',
+        ephemeral: true
+      });
+      return;
     }
+
+    const expectedButtonId = `complete_${data[userId].activeId}`;
+
+    if (interaction.customId !== expectedButtonId) {
+      await interaction.reply({
+        content: '❌ That is an old challenge button. Use the button on your current challenge.',
+        ephemeral: true
+      });
+      return;
+    }
+
+    const difficulty = data[userId].active;
+    const points = pointsMap[difficulty];
+    const completedText = data[userId].activeText;
+
+    data[userId].points += points;
+    data[userId].lastCompleted[difficulty] = completedText;
+    data[userId].active = null;
+    data[userId].activeText = null;
+    data[userId].activeId = null;
+    saveData();
+
+    const disabledRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('completed_done')
+        .setLabel('Completed')
+        .setStyle(ButtonStyle.Success)
+        .setDisabled(true)
+    );
+
+    await interaction.update({
+      content: `🔥 ${interaction.user} completed their challenge and earned **${points} points!**`,
+      embeds: [],
+      components: [disabledRow]
+    });
   }
 });
 
