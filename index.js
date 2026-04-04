@@ -1,26 +1,76 @@
 require('dotenv').config();
 
+const fs = require('fs');
 const {
   Client,
   GatewayIntentBits,
-  SlashCommandBuilder,
+  Events,
   REST,
   Routes,
+  SlashCommandBuilder,
   EmbedBuilder,
   ActionRowBuilder,
   ButtonBuilder,
-  ButtonStyle
+  ButtonStyle,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  PermissionsBitField
 } = require('discord.js');
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds]
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
 });
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 
-let users = {};
+// your private review channel
+const REVIEW_CHANNEL_ID = '1490076952122622003';
+
+const DATA_FILE = './data.json';
+
+let data = {
+  users: {}
+};
+
+if (fs.existsSync(DATA_FILE)) {
+  try {
+    data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+  } catch (err) {
+    console.error('Failed to read data.json, starting fresh:', err);
+  }
+}
+
+function saveData() {
+  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+}
+
+function ensureUser(userId) {
+  if (!data.users[userId]) {
+    data.users[userId] = {
+      epic: null,
+      points: 0,
+      activeChallenge: null,
+      completedChallenges: {
+        easy: [],
+        medium: [],
+        hard: []
+      }
+    };
+  }
+
+  if (!data.users[userId].completedChallenges) {
+    data.users[userId].completedChallenges = {
+      easy: [],
+      medium: [],
+      hard: []
+    };
+  }
+
+  return data.users[userId];
+}
 
 const challenges = {
   easy: [
@@ -31,33 +81,90 @@ const challenges = {
     { text: 'Break 10 objects with your pickaxe', points: 10 }
   ],
   medium: [
-    { text: 'Win a fight using only AR + shotgun', points: 25 },
-    { text: 'Get 5 eliminations', points: 25 },
+    { text: 'Get 3 eliminations', points: 25 },
     { text: 'Reach top 10', points: 25 },
     { text: 'Travel through 3 POIs', points: 25 },
+    { text: 'Win a fight using only AR + shotgun', points: 25 },
     { text: 'Use no heals until after your first fight', points: 25 }
   ],
   hard: [
-    { text: 'Win the game', points: 50 },
-    { text: 'Get 10 eliminations in one match', points: 50 },
-    { text: 'No heals entire game', points: 50 },
+    { text: 'Get 5 eliminations', points: 50 },
+    { text: 'Win a match', points: 50 },
+    { text: 'No heals the entire game', points: 50 },
     { text: 'Only use loot from your first building', points: 50 },
     { text: 'Reach top 3 without using shields', points: 50 }
   ]
 };
 
+function makeId() {
+  return Math.random().toString(36).slice(2, 10);
+}
+
+function pickChallenge(difficulty, completedList) {
+  const pool = challenges[difficulty] || [];
+  const available = pool.filter(c => !completedList.includes(c.text));
+
+  if (available.length === 0) return null;
+
+  return available[Math.floor(Math.random() * available.length)];
+}
+
+function buildChallengeEmbed(user, challengeObj) {
+  return new EmbedBuilder()
+    .setTitle('🎯 Fortnite Challenge')
+    .setColor('Purple')
+    .setDescription(`**${challengeObj.text}**`)
+    .addFields(
+      { name: 'Difficulty', value: challengeObj.difficulty.toUpperCase(), inline: true },
+      { name: 'Epic', value: user.epic || 'Not set', inline: true },
+      { name: 'Points', value: `${challengeObj.points}`, inline: true },
+      { name: 'Status', value: challengeObj.status.toUpperCase(), inline: false }
+    )
+    .setTimestamp();
+}
+
+function buildChallengeButtons(challengeId, pending = false) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`submit_${challengeId}`)
+      .setLabel(pending ? 'Proof Submitted' : 'Submit Proof')
+      .setStyle(ButtonStyle.Success)
+      .setDisabled(pending),
+    new ButtonBuilder()
+      .setCustomId(`cancel_${challengeId}`)
+      .setLabel('Cancel Challenge')
+      .setStyle(ButtonStyle.Danger)
+      .setDisabled(pending)
+  );
+}
+
+function buildReviewButtons(userId, challengeId, disabled = false) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`approve_${userId}_${challengeId}`)
+      .setLabel('Approve')
+      .setStyle(ButtonStyle.Success)
+      .setDisabled(disabled),
+    new ButtonBuilder()
+      .setCustomId(`reject_${userId}_${challengeId}`)
+      .setLabel('Reject')
+      .setStyle(ButtonStyle.Danger)
+      .setDisabled(disabled)
+  );
+}
+
 const commands = [
   new SlashCommandBuilder()
     .setName('ping')
-    .setDescription('Check bot'),
+    .setDescription('Check if the bot is online'),
 
   new SlashCommandBuilder()
     .setName('rules')
-    .setDescription('Show rules'),
+    .setDescription('Show server rules'),
 
   new SlashCommandBuilder()
     .setName('lfg')
-    .setDescription('Find teammates')
+    .setDescription('Find Fortnite teammates')
     .addStringOption(option =>
       option
         .setName('mode')
@@ -72,7 +179,7 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('setepic')
-    .setDescription('Set Epic username')
+    .setDescription('Set your Epic username')
     .addStringOption(option =>
       option
         .setName('username')
@@ -86,7 +193,7 @@ const commands = [
     .addStringOption(option =>
       option
         .setName('difficulty')
-        .setDescription('Choose difficulty')
+        .setDescription('Choose challenge difficulty')
         .setRequired(true)
         .addChoices(
           { name: 'Easy', value: 'easy' },
@@ -97,175 +204,352 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('leaderboard')
-    .setDescription('View leaderboard')
+    .setDescription('Show the challenge leaderboard')
 ].map(c => c.toJSON());
 
-const rest = new REST({ version: '10' }).setToken(TOKEN);
+async function registerCommands() {
+  const rest = new REST({ version: '10' }).setToken(TOKEN);
 
-(async () => {
-  try {
-    console.log('Registering commands...');
-    await rest.put(
-      Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
-      { body: commands }
-    );
-    console.log('Commands registered!');
-  } catch (err) {
-    console.error(err);
-  }
-})();
+  await rest.put(
+    Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
+    { body: commands }
+  );
 
-client.once('ready', () => {
+  console.log('Commands registered');
+}
+
+client.once(Events.ClientReady, async () => {
   console.log(`Logged in as ${client.user.tag}`);
+  await registerCommands();
 });
 
-client.on('interactionCreate', async interaction => {
+client.on(Events.GuildMemberAdd, member => {
+  const channel =
+    member.guild.channels.cache.find(c => c.name === 'general') ||
+    member.guild.channels.cache.find(c => c.name === 'general-chat') ||
+    member.guild.systemChannel;
+
+  if (channel) {
+    channel.send(`Welcome ${member} to Crash & Play Lounge! 🎮`);
+  }
+});
+
+client.on(Events.InteractionCreate, async interaction => {
   if (interaction.isChatInputCommand()) {
-    const { commandName, user } = interaction;
+    const userId = interaction.user.id;
+    const userData = ensureUser(userId);
 
-    if (commandName === 'ping') {
-      return interaction.reply('🏓 Pong!');
+    if (interaction.commandName === 'ping') {
+      await interaction.reply('🏓 Pong!');
+      return;
     }
 
-    if (commandName === 'rules') {
-      return interaction.reply('📜 Be respectful. No toxicity. Have fun!');
+    if (interaction.commandName === 'rules') {
+      await interaction.reply('📜 Be respectful. No toxicity. Have fun!');
+      return;
     }
 
-    if (commandName === 'lfg') {
+    if (interaction.commandName === 'lfg') {
       const mode = interaction.options.getString('mode');
-      return interaction.reply(`🎮 ${user.username} is looking for teammates in **${mode}**!`);
-    }
-
-    if (commandName === 'setepic') {
-      const username = interaction.options.getString('username');
-
-      if (!users[user.id]) {
-        users[user.id] = { epic: '', points: 0, activeChallenges: {}, completed: [] };
-      }
-
-      users[user.id].epic = username;
-
-      return interaction.reply(`✅ Your Epic username is now set to **${username}**`);
-    }
-
-    if (commandName === 'challenge') {
-      const difficulty = interaction.options.getString('difficulty');
-
-      if (!users[user.id] || !users[user.id].epic) {
-        return interaction.reply({
-          content: '❌ You must link your Epic first using `/setepic`',
-          ephemeral: true
-        });
-      }
-
-      if (!users[user.id].activeChallenges) {
-        users[user.id].activeChallenges = {};
-      }
-
-      if (!users[user.id].completed) {
-        users[user.id].completed = [];
-      }
-
-      const completed = users[user.id].completed;
-
-      const available = challenges[difficulty].filter(
-        c => !completed.includes(c.text)
-      );
-
-      if (available.length === 0) {
-        return interaction.reply("🏆 You've completed all challenges in this difficulty!");
-      }
-
-      const challenge = available[Math.floor(Math.random() * available.length)];
-
-      users[user.id].activeChallenges[difficulty] = challenge;
 
       const embed = new EmbedBuilder()
-        .setTitle('🎯 Fortnite Challenge')
-        .setDescription(challenge.text)
+        .setTitle('🎮 LFG')
+        .setColor('Blue')
+        .setDescription(`${interaction.user} is looking for teammates`)
         .addFields(
-          { name: 'Difficulty', value: difficulty.toUpperCase(), inline: true },
-          { name: 'Epic', value: users[user.id].epic, inline: true },
-          { name: 'Points', value: `${challenge.points}`, inline: true }
+          { name: 'Mode', value: mode, inline: true },
+          { name: 'Host', value: interaction.user.tag, inline: true }
         )
-        .setColor('Purple');
+        .setTimestamp();
 
-      const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`complete_${difficulty}`)
-          .setLabel('Mark Complete')
-          .setStyle(ButtonStyle.Success)
-      );
-
-      return interaction.reply({ embeds: [embed], components: [row] });
+      await interaction.reply({ embeds: [embed] });
+      return;
     }
 
-    if (commandName === 'leaderboard') {
-      const sorted = Object.entries(users)
-        .sort((a, b) => b[1].points - a[1].points)
+    if (interaction.commandName === 'setepic') {
+      const username = interaction.options.getString('username');
+      userData.epic = username;
+      saveData();
+
+      await interaction.reply(`✅ Your Epic username is now set to **${username}**`);
+      return;
+    }
+
+    if (interaction.commandName === 'challenge') {
+      if (!userData.epic) {
+        await interaction.reply({
+          content: '❌ You must set your Epic first using `/setepic`',
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (userData.activeChallenge && ['active', 'pending'].includes(userData.activeChallenge.status)) {
+        await interaction.reply({
+          content: '❌ You already have an active challenge. Finish it, submit proof, or cancel it first.',
+          ephemeral: true
+        });
+        return;
+      }
+
+      const difficulty = interaction.options.getString('difficulty');
+      const completedList = userData.completedChallenges[difficulty] || [];
+      const chosen = pickChallenge(difficulty, completedList);
+
+      if (!chosen) {
+        await interaction.reply(`🏆 You have already completed all **${difficulty}** challenges.`);
+        return;
+      }
+
+      const challengeObj = {
+        id: makeId(),
+        difficulty,
+        text: chosen.text,
+        points: chosen.points,
+        status: 'active',
+        proofLink: null,
+        proofNote: null,
+        createdAt: Date.now()
+      };
+
+      userData.activeChallenge = challengeObj;
+      saveData();
+
+      await interaction.reply({
+        embeds: [buildChallengeEmbed(userData, challengeObj)],
+        components: [buildChallengeButtons(challengeObj.id)]
+      });
+      return;
+    }
+
+    if (interaction.commandName === 'leaderboard') {
+      const sorted = Object.entries(data.users)
+        .sort((a, b) => (b[1].points || 0) - (a[1].points || 0))
         .slice(0, 10);
 
       if (sorted.length === 0) {
-        return interaction.reply('📉 No leaderboard yet.');
+        await interaction.reply('📉 No leaderboard yet.');
+        return;
       }
 
       let desc = '';
 
-      sorted.forEach(([id, data], i) => {
+      sorted.forEach(([id, user], index) => {
         const discordName = client.users.cache.get(id)?.username || 'Unknown';
-        desc += `**${i + 1}. ${data.epic}** (${discordName}) — ${data.points} pts\n`;
+        const epicName = user.epic || 'Not set';
+        desc += `**${index + 1}. ${epicName}** (${discordName}) — ${user.points || 0} pts\n`;
       });
 
       const embed = new EmbedBuilder()
         .setTitle('🏆 Leaderboard')
-        .setDescription(desc)
-        .setColor('Gold');
+        .setColor('Gold')
+        .setDescription(desc);
 
-      return interaction.reply({ embeds: [embed] });
+      await interaction.reply({ embeds: [embed] });
+      return;
     }
   }
 
   if (interaction.isButton()) {
-    const userId = interaction.user.id;
-    const difficulty = interaction.customId.split('_')[1];
-    const userData = users[userId];
+    const [action, ...parts] = interaction.customId.split('_');
 
-    if (!userData || !userData.activeChallenges || !userData.activeChallenges[difficulty]) {
-      return interaction.reply({
-        content: '❌ No active challenge.',
+    if (action === 'submit') {
+      const challengeId = parts[0];
+      const userId = interaction.user.id;
+      const userData = ensureUser(userId);
+
+      if (!userData.activeChallenge || userData.activeChallenge.id !== challengeId) {
+        await interaction.reply({
+          content: '❌ That is not your current challenge.',
+          ephemeral: true
+        });
+        return;
+      }
+
+      const modal = new ModalBuilder()
+        .setCustomId(`proofmodal_${challengeId}`)
+        .setTitle('Submit Challenge Proof');
+
+      const proofLinkInput = new TextInputBuilder()
+        .setCustomId('proof_link')
+        .setLabel('Clip or screenshot link')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setPlaceholder('Paste a Medal, YouTube, TikTok, Streamable, or Discord link');
+
+      const proofNoteInput = new TextInputBuilder()
+        .setCustomId('proof_note')
+        .setLabel('Short note')
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(true)
+        .setPlaceholder('Example: got 4 kills and placed top 3');
+
+      const row1 = new ActionRowBuilder().addComponents(proofLinkInput);
+      const row2 = new ActionRowBuilder().addComponents(proofNoteInput);
+
+      modal.addComponents(row1, row2);
+
+      await interaction.showModal(modal);
+      return;
+    }
+
+    if (action === 'cancel') {
+      const challengeId = parts[0];
+      const userId = interaction.user.id;
+      const userData = ensureUser(userId);
+
+      if (!userData.activeChallenge || userData.activeChallenge.id !== challengeId) {
+        await interaction.reply({
+          content: '❌ That is not your current challenge.',
+          ephemeral: true
+        });
+        return;
+      }
+
+      userData.activeChallenge = null;
+      saveData();
+
+      await interaction.update({
+        content: '❌ Challenge cancelled.',
+        embeds: [],
+        components: []
+      });
+      return;
+    }
+
+    if (action === 'approve' || action === 'reject') {
+      const modMember = interaction.member;
+
+      if (
+        !modMember.permissions.has(PermissionsBitField.Flags.ManageGuild) &&
+        !modMember.permissions.has(PermissionsBitField.Flags.Administrator)
+      ) {
+        await interaction.reply({
+          content: '❌ You need Manage Server or Administrator to do that.',
+          ephemeral: true
+        });
+        return;
+      }
+
+      const userId = parts[0];
+      const challengeId = parts[1];
+      const userData = ensureUser(userId);
+
+      if (!userData.activeChallenge || userData.activeChallenge.id !== challengeId) {
+        await interaction.reply({
+          content: '❌ That challenge is no longer active.',
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (action === 'approve') {
+        const challenge = userData.activeChallenge;
+
+        if (!userData.completedChallenges[challenge.difficulty].includes(challenge.text)) {
+          userData.completedChallenges[challenge.difficulty].push(challenge.text);
+        }
+
+        userData.points += challenge.points;
+        userData.activeChallenge = null;
+        saveData();
+
+        const approvedEmbed = new EmbedBuilder()
+          .setTitle('✅ Challenge Approved')
+          .setColor('Green')
+          .setDescription(`<@${userId}> completed their challenge and earned **${challenge.points}** points.`)
+          .addFields(
+            { name: 'Challenge', value: challenge.text, inline: false },
+            { name: 'Difficulty', value: challenge.difficulty.toUpperCase(), inline: true },
+            { name: 'Epic', value: userData.epic || 'Not set', inline: true }
+          )
+          .setFooter({ text: `Approved by ${interaction.user.tag}` });
+
+        await interaction.update({
+          embeds: [approvedEmbed],
+          components: [buildReviewButtons(userId, challengeId, true)]
+        });
+
+        return;
+      }
+
+      if (action === 'reject') {
+        userData.activeChallenge.status = 'active';
+        userData.activeChallenge.proofLink = null;
+        userData.activeChallenge.proofNote = null;
+        saveData();
+
+        const rejectedEmbed = new EmbedBuilder()
+          .setTitle('❌ Challenge Rejected')
+          .setColor('Red')
+          .setDescription(`<@${userId}>'s proof was rejected. They can submit proof again.`)
+          .addFields(
+            { name: 'Challenge', value: userData.activeChallenge.text, inline: false },
+            { name: 'Difficulty', value: userData.activeChallenge.difficulty.toUpperCase(), inline: true },
+            { name: 'Epic', value: userData.epic || 'Not set', inline: true }
+          )
+          .setFooter({ text: `Rejected by ${interaction.user.tag}` });
+
+        await interaction.update({
+          embeds: [rejectedEmbed],
+          components: [buildReviewButtons(userId, challengeId, true)]
+        });
+
+        return;
+      }
+    }
+  }
+
+  if (interaction.isModalSubmit()) {
+    const [modalType, challengeId] = interaction.customId.split('_');
+
+    if (modalType !== 'proofmodal') return;
+
+    const userId = interaction.user.id;
+    const userData = ensureUser(userId);
+
+    if (!userData.activeChallenge || userData.activeChallenge.id !== challengeId) {
+      await interaction.reply({
+        content: '❌ That challenge is no longer active.',
         ephemeral: true
       });
+      return;
     }
 
-    const challenge = userData.activeChallenges[difficulty];
+    const proofLink = interaction.fields.getTextInputValue('proof_link');
+    const proofNote = interaction.fields.getTextInputValue('proof_note');
 
-    if (!userData.completed) {
-      userData.completed = [];
-    }
+    userData.activeChallenge.status = 'pending';
+    userData.activeChallenge.proofLink = proofLink;
+    userData.activeChallenge.proofNote = proofNote;
+    saveData();
 
-    if (!userData.completed.includes(challenge.text)) {
-      userData.completed.push(challenge.text);
-      userData.points += challenge.points;
-    }
+    const reviewChannel =
+      interaction.guild.channels.cache.get(REVIEW_CHANNEL_ID) ||
+      interaction.channel;
 
-    delete userData.activeChallenges[difficulty];
+    const reviewEmbed = new EmbedBuilder()
+      .setTitle('📹 Challenge Proof Submitted')
+      .setColor('Orange')
+      .setDescription(`<@${userId}> submitted proof for review.`)
+      .addFields(
+        { name: 'Epic', value: userData.epic || 'Not set', inline: true },
+        { name: 'Discord', value: interaction.user.tag, inline: true },
+        { name: 'Difficulty', value: userData.activeChallenge.difficulty.toUpperCase(), inline: true },
+        { name: 'Challenge', value: userData.activeChallenge.text, inline: false },
+        { name: 'Proof Link', value: proofLink, inline: false },
+        { name: 'Player Note', value: proofNote, inline: false }
+      )
+      .setTimestamp();
 
-    const disabledRow = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId('done')
-        .setLabel('Challenge Completed')
-        .setStyle(ButtonStyle.Success)
-        .setDisabled(true)
-    );
+    await reviewChannel.send({
+      embeds: [reviewEmbed],
+      components: [buildReviewButtons(userId, challengeId)]
+    });
 
-    return interaction.update({
-      embeds: [
-        new EmbedBuilder()
-          .setTitle('✅ Challenge Completed')
-          .setDescription(`You earned **${challenge.points}** points for:\n${challenge.text}`)
-          .setColor('Green')
-      ],
-      components: [disabledRow]
+    await interaction.reply({
+      content: '📨 Your proof was submitted for review. A mod must approve it before you get points.',
+      ephemeral: true
     });
   }
 });
