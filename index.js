@@ -29,6 +29,7 @@ const GUILD_ID = process.env.GUILD_ID;
 const REVIEW_CHANNEL_ID = '1490076952122622003';
 
 const DATA_FILE = './data.json';
+const DAILY_POINTS = 15;
 
 let data = {
   users: {},
@@ -66,45 +67,94 @@ function ensureUser(userId) {
       epic: null,
       points: 0,
       activeChallenge: null,
+      dailyClaimedAt: null,
       completedChallenges: {
         easy: [],
         medium: [],
         hard: []
+      },
+      stats: {
+        approvedChallenges: 0,
+        rejectedProofs: 0,
+        rerolls: 0,
+        dailyClaims: 0
       }
     };
   }
 
-  if (!data.users[userId].completedChallenges) {
-    data.users[userId].completedChallenges = {
+  const user = data.users[userId];
+
+  if (!user.completedChallenges) {
+    user.completedChallenges = {
       easy: [],
       medium: [],
       hard: []
     };
   }
 
-  if (typeof data.users[userId].points !== 'number') {
-    data.users[userId].points = 0;
+  if (typeof user.points !== 'number') {
+    user.points = 0;
   }
 
-  if (!('epic' in data.users[userId])) {
-    data.users[userId].epic = null;
+  if (!('epic' in user)) {
+    user.epic = null;
   }
 
-  if (!('activeChallenge' in data.users[userId])) {
-    data.users[userId].activeChallenge = null;
+  if (!('activeChallenge' in user)) {
+    user.activeChallenge = null;
   }
 
-  if (data.users[userId].activeChallenge) {
-    if (!('sourceChannelId' in data.users[userId].activeChallenge)) {
-      data.users[userId].activeChallenge.sourceChannelId = null;
+  if (!('dailyClaimedAt' in user)) {
+    user.dailyClaimedAt = null;
+  }
+
+  if (!user.stats) {
+    user.stats = {
+      approvedChallenges: 0,
+      rejectedProofs: 0,
+      rerolls: 0,
+      dailyClaims: 0
+    };
+  }
+
+  if (typeof user.stats.approvedChallenges !== 'number') {
+    user.stats.approvedChallenges = 0;
+  }
+
+  if (typeof user.stats.rejectedProofs !== 'number') {
+    user.stats.rejectedProofs = 0;
+  }
+
+  if (typeof user.stats.rerolls !== 'number') {
+    user.stats.rerolls = 0;
+  }
+
+  if (typeof user.stats.dailyClaims !== 'number') {
+    user.stats.dailyClaims = 0;
+  }
+
+  if (user.activeChallenge) {
+    if (!('sourceChannelId' in user.activeChallenge)) {
+      user.activeChallenge.sourceChannelId = null;
     }
 
-    if (!('sourceMessageId' in data.users[userId].activeChallenge)) {
-      data.users[userId].activeChallenge.sourceMessageId = null;
+    if (!('sourceMessageId' in user.activeChallenge)) {
+      user.activeChallenge.sourceMessageId = null;
+    }
+
+    if (!('rerollUsed' in user.activeChallenge)) {
+      user.activeChallenge.rerollUsed = false;
     }
   }
 
-  return data.users[userId];
+  return user;
+}
+
+function isStaff(member) {
+  return (
+    member.permissions.has(PermissionsBitField.Flags.Administrator) ||
+    member.permissions.has(PermissionsBitField.Flags.ManageGuild)
+  );
 }
 
 const challenges = {
@@ -135,9 +185,11 @@ function makeId() {
   return Math.random().toString(36).slice(2, 10);
 }
 
-function pickChallenge(difficulty, completedList) {
+function pickChallenge(difficulty, completedList, excludeText = null) {
   const pool = challenges[difficulty] || [];
-  const available = pool.filter(text => !completedList.includes(text));
+  const available = pool.filter(
+    text => !completedList.includes(text) && text !== excludeText
+  );
 
   if (available.length === 0) return null;
 
@@ -145,15 +197,30 @@ function pickChallenge(difficulty, completedList) {
 }
 
 function buildChallengeEmbed(user, challengeObj) {
+  const statusMap = {
+    active: 'ACTIVE',
+    pending: 'PENDING REVIEW',
+    approved: 'APPROVED',
+    cancelled: 'CANCELLED'
+  };
+
   return new EmbedBuilder()
     .setTitle('🎯 Fortnite Challenge')
-    .setColor('Purple')
+    .setColor(
+      challengeObj.status === 'approved'
+        ? 'Green'
+        : challengeObj.status === 'pending'
+        ? 'Orange'
+        : challengeObj.status === 'cancelled'
+        ? 'Red'
+        : 'Purple'
+    )
     .setDescription(`**${challengeObj.text}**`)
     .addFields(
       { name: 'Difficulty', value: challengeObj.difficulty.toUpperCase(), inline: true },
       { name: 'Epic', value: user.epic || 'Not set', inline: true },
       { name: 'Points', value: `${challengeObj.points}`, inline: true },
-      { name: 'Status', value: challengeObj.status.toUpperCase(), inline: false }
+      { name: 'Status', value: statusMap[challengeObj.status] || challengeObj.status.toUpperCase(), inline: false }
     )
     .setTimestamp();
 }
@@ -188,15 +255,46 @@ function buildReviewButtons(userId, challengeId, disabled = false) {
   );
 }
 
-async function updateOriginalChallengeMessage(user, challengeObj, options = {}) {
-  if (!challengeObj?.sourceChannelId || !challengeObj?.sourceMessageId) return;
+function formatCooldown(ms) {
+  const totalSeconds = Math.ceil(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+
+  return `${minutes}m`;
+}
+
+async function getMessageFromStoredLocation(channelId, messageId) {
+  if (!channelId || !messageId) return null;
 
   try {
-    const channel = await client.channels.fetch(challengeObj.sourceChannelId).catch(() => null);
-    if (!channel || !channel.isTextBased()) return;
+    const channel = await client.channels.fetch(channelId).catch(() => null);
+    if (!channel || !channel.messages) return null;
 
-    const message = await channel.messages.fetch(challengeObj.sourceMessageId).catch(() => null);
-    if (!message) return;
+    const message = await channel.messages.fetch(messageId).catch(() => null);
+    return message;
+  } catch (err) {
+    console.error('Failed to fetch stored message:', err);
+    return null;
+  }
+}
+
+async function updateOriginalChallengeMessage(user, challengeObj, options = {}) {
+  if (!challengeObj?.sourceChannelId || !challengeObj?.sourceMessageId) return false;
+
+  try {
+    const message = await getMessageFromStoredLocation(
+      challengeObj.sourceChannelId,
+      challengeObj.sourceMessageId
+    );
+
+    if (!message) {
+      console.error('Original challenge message not found.');
+      return false;
+    }
 
     await message.edit({
       content: options.content ?? '',
@@ -205,12 +303,15 @@ async function updateOriginalChallengeMessage(user, challengeObj, options = {}) 
         buildChallengeButtons(
           challengeObj.id,
           challengeObj.status === 'pending',
-          challengeObj.status === 'approved'
+          challengeObj.status === 'approved' || challengeObj.status === 'cancelled'
         )
       ]
     });
+
+    return true;
   } catch (err) {
     console.error('Failed to update original challenge message:', err);
+    return false;
   }
 }
 
@@ -222,6 +323,10 @@ const commands = [
   new SlashCommandBuilder()
     .setName('rules')
     .setDescription('Show server rules'),
+
+  new SlashCommandBuilder()
+    .setName('stormbuddy')
+    .setDescription('Show StormBuddy help and commands'),
 
   new SlashCommandBuilder()
     .setName('lfg')
@@ -261,6 +366,24 @@ const commands = [
           { name: 'Medium', value: 'medium' },
           { name: 'Hard', value: 'hard' }
         )
+    ),
+
+  new SlashCommandBuilder()
+    .setName('reroll')
+    .setDescription('Reroll your current active challenge once'),
+
+  new SlashCommandBuilder()
+    .setName('daily')
+    .setDescription('Claim your daily StormBuddy points'),
+
+  new SlashCommandBuilder()
+    .setName('profile')
+    .setDescription('View your StormBuddy profile or someone else’s')
+    .addUserOption(option =>
+      option
+        .setName('user')
+        .setDescription('User to view')
+        .setRequired(false)
     ),
 
   new SlashCommandBuilder()
@@ -384,6 +507,41 @@ client.on(Events.InteractionCreate, async interaction => {
         return;
       }
 
+      if (interaction.commandName === 'stormbuddy') {
+        const embed = new EmbedBuilder()
+          .setTitle('⛈️ StormBuddy Commands')
+          .setColor('Blurple')
+          .setDescription('Here’s what StormBuddy can do right now.')
+          .addFields(
+            {
+              name: 'Player Commands',
+              value: [
+                '`/setepic` — set your Epic username',
+                '`/challenge` — get a challenge',
+                '`/reroll` — reroll your active challenge once',
+                '`/daily` — claim daily bonus points',
+                '`/profile` — view stats',
+                '`/leaderboard` — top players',
+                '`/lfg` — find teammates'
+              ].join('\n')
+            },
+            {
+              name: 'Staff Commands',
+              value: [
+                '`/setpoints`',
+                '`/setuserpoints`',
+                '`/addpoints`',
+                '`/removepoints`',
+                '`/resetleaderboard`'
+              ].join('\n')
+            }
+          )
+          .setFooter({ text: `Daily bonus: ${DAILY_POINTS} points` });
+
+        await interaction.reply({ embeds: [embed], ephemeral: true });
+        return;
+      }
+
       if (interaction.commandName === 'lfg') {
         const mode = interaction.options.getString('mode');
 
@@ -410,11 +568,58 @@ client.on(Events.InteractionCreate, async interaction => {
         return;
       }
 
+      if (interaction.commandName === 'daily') {
+        const now = Date.now();
+        const lastClaim = userData.dailyClaimedAt || 0;
+        const cooldown = 24 * 60 * 60 * 1000;
+        const remaining = cooldown - (now - lastClaim);
+
+        if (remaining > 0) {
+          await interaction.reply({
+            content: `⏳ You already claimed your daily reward. Try again in **${formatCooldown(remaining)}**.`,
+            ephemeral: true
+          });
+          return;
+        }
+
+        userData.points += DAILY_POINTS;
+        userData.dailyClaimedAt = now;
+        userData.stats.dailyClaims += 1;
+        saveData();
+
+        await interaction.reply(`🎁 You claimed your daily reward and earned **${DAILY_POINTS}** points! You now have **${userData.points}** points.`);
+        return;
+      }
+
+      if (interaction.commandName === 'profile') {
+        const targetUser = interaction.options.getUser('user') || interaction.user;
+        const targetData = ensureUser(targetUser.id);
+
+        const embed = new EmbedBuilder()
+          .setTitle(`📊 ${targetUser.username}'s StormBuddy Profile`)
+          .setColor('Aqua')
+          .addFields(
+            { name: 'Epic', value: targetData.epic || 'Not set', inline: true },
+            { name: 'Points', value: `${targetData.points}`, inline: true },
+            { name: 'Active Challenge', value: targetData.activeChallenge ? targetData.activeChallenge.text : 'None', inline: false },
+            { name: 'Approved Challenges', value: `${targetData.stats.approvedChallenges}`, inline: true },
+            { name: 'Rejected Proofs', value: `${targetData.stats.rejectedProofs}`, inline: true },
+            { name: 'Rerolls Used', value: `${targetData.stats.rerolls}`, inline: true },
+            { name: 'Daily Claims', value: `${targetData.stats.dailyClaims}`, inline: true },
+            {
+              name: 'Completed by Difficulty',
+              value: `Easy: ${targetData.completedChallenges.easy.length}\nMedium: ${targetData.completedChallenges.medium.length}\nHard: ${targetData.completedChallenges.hard.length}`,
+              inline: false
+            }
+          )
+          .setTimestamp();
+
+        await interaction.reply({ embeds: [embed] });
+        return;
+      }
+
       if (interaction.commandName === 'setpoints') {
-        if (
-          !interaction.member.permissions.has(PermissionsBitField.Flags.Administrator) &&
-          !interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild)
-        ) {
+        if (!isStaff(interaction.member)) {
           await interaction.reply({
             content: '❌ Only admins or mods can use this.',
             ephemeral: true
@@ -441,10 +646,7 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       if (interaction.commandName === 'setuserpoints') {
-        if (
-          !interaction.member.permissions.has(PermissionsBitField.Flags.Administrator) &&
-          !interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild)
-        ) {
+        if (!isStaff(interaction.member)) {
           await interaction.reply({
             content: '❌ Only admins or mods can use this.',
             ephemeral: true
@@ -472,10 +674,7 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       if (interaction.commandName === 'addpoints') {
-        if (
-          !interaction.member.permissions.has(PermissionsBitField.Flags.Administrator) &&
-          !interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild)
-        ) {
+        if (!isStaff(interaction.member)) {
           await interaction.reply({
             content: '❌ Only admins or mods can use this.',
             ephemeral: true
@@ -498,17 +697,12 @@ client.on(Events.InteractionCreate, async interaction => {
         targetUserData.points += amount;
         saveData();
 
-        await interaction.reply(
-          `✅ Added **${amount}** points to **${targetUser.tag}**.\nNew total: **${targetUserData.points}**`
-        );
+        await interaction.reply(`✅ Added **${amount}** points to **${targetUser.tag}**.\nNew total: **${targetUserData.points}**`);
         return;
       }
 
       if (interaction.commandName === 'removepoints') {
-        if (
-          !interaction.member.permissions.has(PermissionsBitField.Flags.Administrator) &&
-          !interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild)
-        ) {
+        if (!isStaff(interaction.member)) {
           await interaction.reply({
             content: '❌ Only admins or mods can use this.',
             ephemeral: true
@@ -536,17 +730,12 @@ client.on(Events.InteractionCreate, async interaction => {
 
         saveData();
 
-        await interaction.reply(
-          `❌ Removed **${amount}** points from **${targetUser.tag}**.\nNew total: **${targetUserData.points}**`
-        );
+        await interaction.reply(`❌ Removed **${amount}** points from **${targetUser.tag}**.\nNew total: **${targetUserData.points}**`);
         return;
       }
 
       if (interaction.commandName === 'resetleaderboard') {
-        if (
-          !interaction.member.permissions.has(PermissionsBitField.Flags.Administrator) &&
-          !interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild)
-        ) {
+        if (!isStaff(interaction.member)) {
           await interaction.reply({
             content: '❌ Only admins or mods can use this.',
             ephemeral: true
@@ -575,7 +764,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
         if (userData.activeChallenge && ['active', 'pending'].includes(userData.activeChallenge.status)) {
           await interaction.reply({
-            content: '❌ You already have an active challenge. Finish it, submit proof, or cancel it first.',
+            content: '❌ You already have an active challenge. Finish it, submit proof, reroll, or cancel it first.',
             ephemeral: true
           });
           return;
@@ -600,7 +789,8 @@ client.on(Events.InteractionCreate, async interaction => {
           proofNote: null,
           createdAt: Date.now(),
           sourceChannelId: null,
-          sourceMessageId: null
+          sourceMessageId: null,
+          rerollUsed: false
         };
 
         userData.activeChallenge = challengeObj;
@@ -622,6 +812,76 @@ client.on(Events.InteractionCreate, async interaction => {
         return;
       }
 
+      if (interaction.commandName === 'reroll') {
+        if (!userData.epic) {
+          await interaction.reply({
+            content: '❌ You must set your Epic first using `/setepic`',
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (!userData.activeChallenge) {
+          await interaction.reply({
+            content: '❌ You do not have an active challenge to reroll.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (userData.activeChallenge.status !== 'active') {
+          await interaction.reply({
+            content: '❌ You can only reroll a challenge while it is active.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (userData.activeChallenge.rerollUsed) {
+          await interaction.reply({
+            content: '❌ You already used your reroll on this challenge.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        const currentChallenge = userData.activeChallenge;
+        const completedList = userData.completedChallenges[currentChallenge.difficulty] || [];
+        const newChallengeText = pickChallenge(
+          currentChallenge.difficulty,
+          completedList,
+          currentChallenge.text
+        );
+
+        if (!newChallengeText) {
+          await interaction.reply({
+            content: '❌ No different challenge is available to reroll into.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        currentChallenge.text = newChallengeText;
+        currentChallenge.rerollUsed = true;
+        currentChallenge.createdAt = Date.now();
+        currentChallenge.proofLink = null;
+        currentChallenge.proofNote = null;
+        userData.stats.rerolls += 1;
+        saveData();
+
+        await updateOriginalChallengeMessage(userData, currentChallenge, {
+          content: '🔄 Challenge rerolled!'
+        });
+
+        await interaction.reply({
+          content: '🔄 Your challenge was rerolled!',
+          embeds: [buildChallengeEmbed(userData, currentChallenge)],
+          ephemeral: true
+        });
+
+        return;
+      }
+
       if (interaction.commandName === 'leaderboard') {
         const sorted = Object.entries(data.users)
           .sort((a, b) => (b[1].points || 0) - (a[1].points || 0))
@@ -639,13 +899,20 @@ client.on(Events.InteractionCreate, async interaction => {
           const discordUser = await client.users.fetch(id).catch(() => null);
           const discordName = discordUser?.username || 'Unknown';
           const epicName = user.epic || 'Not set';
-          desc += `**${index + 1}. ${epicName}** (${discordName}) — ${user.points || 0} pts\n`;
+
+          const medal =
+            index === 0 ? '🥇' :
+            index === 1 ? '🥈' :
+            index === 2 ? '🥉' : '•';
+
+          desc += `${medal} **${index + 1}. ${epicName}** (${discordName}) — ${user.points || 0} pts\n`;
         }
 
         const embed = new EmbedBuilder()
           .setTitle('🏆 Leaderboard')
           .setColor('Gold')
-          .setDescription(desc);
+          .setDescription(desc)
+          .setFooter({ text: 'Keep grinding those challenges.' });
 
         await interaction.reply({ embeds: [embed] });
         return;
@@ -708,6 +975,14 @@ client.on(Events.InteractionCreate, async interaction => {
           return;
         }
 
+        userData.activeChallenge.status = 'cancelled';
+        saveData();
+
+        await updateOriginalChallengeMessage(userData, userData.activeChallenge, {
+          content: '❌ Challenge cancelled.',
+          components: [buildChallengeButtons(userData.activeChallenge.id, false, true)]
+        });
+
         userData.activeChallenge = null;
         saveData();
 
@@ -722,10 +997,7 @@ client.on(Events.InteractionCreate, async interaction => {
       if (action === 'approve' || action === 'reject') {
         const modMember = interaction.member;
 
-        if (
-          !modMember.permissions.has(PermissionsBitField.Flags.ManageGuild) &&
-          !modMember.permissions.has(PermissionsBitField.Flags.Administrator)
-        ) {
+        if (!isStaff(modMember)) {
           await interaction.reply({
             content: '❌ You need Manage Server or Administrator to do that.',
             ephemeral: true
@@ -755,11 +1027,12 @@ client.on(Events.InteractionCreate, async interaction => {
           }
 
           userData.points += challenge.points;
+          userData.stats.approvedChallenges += 1;
           challenge.status = 'approved';
           saveData();
 
           await updateOriginalChallengeMessage(userData, challenge, {
-            content: '✅ Challenge approved!',
+            content: '✅ Challenge approved and completed!',
             components: [buildChallengeButtons(challenge.id, true, true)]
           });
 
@@ -812,6 +1085,7 @@ client.on(Events.InteractionCreate, async interaction => {
           userData.activeChallenge.status = 'active';
           userData.activeChallenge.proofLink = null;
           userData.activeChallenge.proofNote = null;
+          userData.stats.rejectedProofs += 1;
           saveData();
 
           await updateOriginalChallengeMessage(userData, userData.activeChallenge, {
