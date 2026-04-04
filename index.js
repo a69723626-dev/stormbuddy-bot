@@ -31,12 +31,26 @@ const REVIEW_CHANNEL_ID = '1490076952122622003';
 const DATA_FILE = './data.json';
 
 let data = {
-  users: {}
+  users: {},
+  settings: {
+    easy: 10,
+    medium: 25,
+    hard: 50
+  }
 };
 
 if (fs.existsSync(DATA_FILE)) {
   try {
-    data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+    const existing = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+
+    data = {
+      users: existing.users || {},
+      settings: {
+        easy: existing.settings?.easy ?? 10,
+        medium: existing.settings?.medium ?? 25,
+        hard: existing.settings?.hard ?? 50
+      }
+    };
   } catch (err) {
     console.error('Failed to read data.json, starting fresh:', err);
   }
@@ -68,30 +82,42 @@ function ensureUser(userId) {
     };
   }
 
+  if (typeof data.users[userId].points !== 'number') {
+    data.users[userId].points = 0;
+  }
+
+  if (!('epic' in data.users[userId])) {
+    data.users[userId].epic = null;
+  }
+
+  if (!('activeChallenge' in data.users[userId])) {
+    data.users[userId].activeChallenge = null;
+  }
+
   return data.users[userId];
 }
 
 const challenges = {
   easy: [
-    { text: 'Get 1 elimination', points: 10 },
-    { text: 'Open 5 chests', points: 10 },
-    { text: 'Survive 5 minutes', points: 10 },
-    { text: 'Use 2 healing items in one match', points: 10 },
-    { text: 'Break 10 objects with your pickaxe', points: 10 }
+    'Get 1 elimination',
+    'Open 5 chests',
+    'Survive 5 minutes',
+    'Use 2 healing items in one match',
+    'Break 10 objects with your pickaxe'
   ],
   medium: [
-    { text: 'Get 3 eliminations', points: 25 },
-    { text: 'Reach top 10', points: 25 },
-    { text: 'Travel through 3 POIs', points: 25 },
-    { text: 'Win a fight using only AR + shotgun', points: 25 },
-    { text: 'Use no heals until after your first fight', points: 25 }
+    'Get 3 eliminations',
+    'Reach top 10',
+    'Travel through 3 POIs',
+    'Win a fight using only AR + shotgun',
+    'Use no heals until after your first fight'
   ],
   hard: [
-    { text: 'Get 5 eliminations', points: 50 },
-    { text: 'Win a match', points: 50 },
-    { text: 'No heals the entire game', points: 50 },
-    { text: 'Only use loot from your first building', points: 50 },
-    { text: 'Reach top 3 without using shields', points: 50 }
+    'Get 5 eliminations',
+    'Win a match',
+    'No heals the entire game',
+    'Only use loot from your first building',
+    'Reach top 3 without using shields'
   ]
 };
 
@@ -101,7 +127,7 @@ function makeId() {
 
 function pickChallenge(difficulty, completedList) {
   const pool = challenges[difficulty] || [];
-  const available = pool.filter(c => !completedList.includes(c.text));
+  const available = pool.filter(text => !completedList.includes(text));
 
   if (available.length === 0) return null;
 
@@ -203,7 +229,28 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('leaderboard')
-    .setDescription('Show the challenge leaderboard')
+    .setDescription('Show the challenge leaderboard'),
+
+  new SlashCommandBuilder()
+    .setName('setpoints')
+    .setDescription('Change challenge points for a difficulty')
+    .addStringOption(option =>
+      option
+        .setName('difficulty')
+        .setDescription('Which difficulty to change')
+        .setRequired(true)
+        .addChoices(
+          { name: 'Easy', value: 'easy' },
+          { name: 'Medium', value: 'medium' },
+          { name: 'Hard', value: 'hard' }
+        )
+    )
+    .addIntegerOption(option =>
+      option
+        .setName('points')
+        .setDescription('How many points this difficulty should give')
+        .setRequired(true)
+    )
 ].map(c => c.toJSON());
 
 async function registerCommands() {
@@ -275,6 +322,36 @@ client.on(Events.InteractionCreate, async interaction => {
         return;
       }
 
+      if (interaction.commandName === 'setpoints') {
+        if (
+          !interaction.member.permissions.has(PermissionsBitField.Flags.Administrator) &&
+          !interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild)
+        ) {
+          await interaction.reply({
+            content: '❌ Only admins or mods can use this.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        const difficulty = interaction.options.getString('difficulty');
+        const points = interaction.options.getInteger('points');
+
+        if (points < 1) {
+          await interaction.reply({
+            content: '❌ Points must be at least 1.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        data.settings[difficulty] = points;
+        saveData();
+
+        await interaction.reply(`✅ **${difficulty.toUpperCase()}** challenges now give **${points}** points.`);
+        return;
+      }
+
       if (interaction.commandName === 'challenge') {
         if (!userData.epic) {
           await interaction.reply({
@@ -294,9 +371,9 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const difficulty = interaction.options.getString('difficulty');
         const completedList = userData.completedChallenges[difficulty] || [];
-        const chosen = pickChallenge(difficulty, completedList);
+        const chosenText = pickChallenge(difficulty, completedList);
 
-        if (!chosen) {
+        if (!chosenText) {
           await interaction.reply(`🏆 You have already completed all **${difficulty}** challenges.`);
           return;
         }
@@ -304,8 +381,8 @@ client.on(Events.InteractionCreate, async interaction => {
         const challengeObj = {
           id: makeId(),
           difficulty,
-          text: chosen.text,
-          points: chosen.points,
+          text: chosenText,
+          points: data.settings[difficulty],
           status: 'active',
           proofLink: null,
           proofNote: null,
