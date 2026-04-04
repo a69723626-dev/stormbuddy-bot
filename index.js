@@ -83,20 +83,15 @@ function getRandomChallenge(difficulty, lastCompletedText = null) {
 }
 
 const commands = [
-  new SlashCommandBuilder()
-    .setName('ping')
-    .setDescription('Check if the bot is online'),
+  new SlashCommandBuilder().setName('ping').setDescription('Check bot'),
 
-  new SlashCommandBuilder()
-    .setName('rules')
-    .setDescription('Show server rules'),
+  new SlashCommandBuilder().setName('rules').setDescription('Show rules'),
 
   new SlashCommandBuilder()
     .setName('lfg')
-    .setDescription('Find Fortnite teammates')
+    .setDescription('Find teammates')
     .addStringOption(option =>
       option.setName('mode')
-        .setDescription('Choose a mode')
         .setRequired(true)
         .addChoices(
           { name: 'Battle Royale', value: 'Battle Royale' },
@@ -107,19 +102,16 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('setepic')
-    .setDescription('Set your Fortnite username')
+    .setDescription('Set Epic username')
     .addStringOption(option =>
-      option.setName('username')
-        .setDescription('Your Epic username')
-        .setRequired(true)
+      option.setName('username').setRequired(true)
     ),
 
   new SlashCommandBuilder()
     .setName('challenge')
-    .setDescription('Get a Fortnite challenge')
+    .setDescription('Get challenge')
     .addStringOption(option =>
       option.setName('difficulty')
-        .setDescription('Choose difficulty')
         .setRequired(true)
         .addChoices(
           { name: 'Easy', value: 'easy' },
@@ -130,8 +122,8 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('leaderboard')
-    .setDescription('Show the challenge leaderboard')
-].map(command => command.toJSON());
+    .setDescription('Show leaderboard')
+].map(c => c.toJSON());
 
 async function registerCommands() {
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -150,13 +142,9 @@ client.once(Events.ClientReady, async () => {
 });
 
 client.on(Events.GuildMemberAdd, member => {
-  const channel =
-    member.guild.channels.cache.find(c => c.name === 'general') ||
-    member.guild.channels.cache.find(c => c.name === 'general-chat') ||
-    member.guild.systemChannel;
-
+  const channel = member.guild.systemChannel;
   if (channel) {
-    channel.send(`Welcome ${member} to Crash & Play Lounge! 🎮`);
+    channel.send(`Welcome ${member} 🎮`);
   }
 });
 
@@ -179,40 +167,26 @@ client.on(Events.InteractionCreate, async interaction => {
       };
     }
 
-    if (!data[userId].lastCompleted) {
-      data[userId].lastCompleted = {
-        easy: null,
-        medium: null,
-        hard: null
-      };
-    }
-
     if (interaction.commandName === 'ping') {
-      await interaction.reply('Bot is online 🔥');
-      return;
+      return interaction.reply('Bot is online 🔥');
     }
 
     if (interaction.commandName === 'rules') {
-      await interaction.reply(
-        'Be respectful, no cheating talk, no spam, use the correct channels, and have fun.'
-      );
-      return;
+      return interaction.reply('Be respectful, no spam, have fun.');
     }
 
     if (interaction.commandName === 'lfg') {
       const mode = interaction.options.getString('mode');
 
       const embed = new EmbedBuilder()
-        .setTitle('🎮 LFG Post')
-        .setDescription(`${interaction.user} is looking for players`)
+        .setTitle('🎮 LFG')
+        .setDescription(`${interaction.user}`)
         .addFields(
-          { name: 'Mode', value: mode, inline: true },
-          { name: 'Host', value: interaction.user.tag, inline: true }
-        )
-        .setTimestamp();
+          { name: 'Mode', value: mode },
+          { name: 'Host', value: interaction.user.tag }
+        );
 
-      await interaction.reply({ embeds: [embed] });
-      return;
+      return interaction.reply({ embeds: [embed] });
     }
 
     if (interaction.commandName === 'setepic') {
@@ -220,33 +194,32 @@ client.on(Events.InteractionCreate, async interaction => {
       data[userId].epic = username;
       saveData();
 
-      await interaction.reply(`✅ Your Epic username is now set to **${username}**`);
-      return;
+      return interaction.reply(`✅ Set to **${username}**`);
     }
 
     if (interaction.commandName === 'challenge') {
       if (!data[userId].epic) {
-        await interaction.reply({
-          content: '❌ You must set your Epic username first using `/setepic`',
+        return interaction.reply({
+          content: '❌ Use /setepic first',
           ephemeral: true
         });
-        return;
       }
 
       const difficulty = interaction.options.getString('difficulty');
-      const lastCompletedText = data[userId].lastCompleted[difficulty];
-      const challengeText = getRandomChallenge(difficulty, lastCompletedText);
-      const challengeId = makeChallengeId();
+      const last = data[userId].lastCompleted[difficulty];
+
+      const challengeText = getRandomChallenge(difficulty, last);
+      const id = makeChallengeId();
 
       data[userId].active = difficulty;
       data[userId].activeText = challengeText;
-      data[userId].activeId = challengeId;
+      data[userId].activeId = id;
       saveData();
 
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
-          .setCustomId(`complete_${challengeId}`)
-          .setLabel('Completed')
+          .setCustomId(`complete_${id}`)
+          .setLabel('Mark Complete')
           .setStyle(ButtonStyle.Success)
       );
 
@@ -254,17 +227,12 @@ client.on(Events.InteractionCreate, async interaction => {
         .setTitle('🎯 Fortnite Challenge')
         .setDescription(`**${challengeText}**`)
         .addFields(
-          { name: 'Difficulty', value: difficulty.toUpperCase(), inline: true },
-          { name: 'Epic', value: data[userId].epic, inline: true },
-          { name: 'Points', value: `${pointsMap[difficulty]}`, inline: true }
-        )
-        .setTimestamp();
+          { name: 'Difficulty', value: difficulty.toUpperCase() },
+          { name: 'Epic', value: data[userId].epic },
+          { name: 'Points', value: `${pointsMap[difficulty]}` }
+        );
 
-      await interaction.reply({
-        embeds: [embed],
-        components: [row]
-      });
-      return;
+      return interaction.reply({ embeds: [embed], components: [row] });
     }
 
     if (interaction.commandName === 'leaderboard') {
@@ -272,68 +240,58 @@ client.on(Events.InteractionCreate, async interaction => {
         .sort((a, b) => b[1].points - a[1].points)
         .slice(0, 10);
 
-      if (sorted.length === 0) {
-        await interaction.reply('No leaderboard data yet.');
-        return;
-      }
+      let text = '🏆 Leaderboard\n\n';
 
-      let text = '🏆 **Leaderboard**\n\n';
+      sorted.forEach((entry, i) => {
+        const u = entry[1];
+        const discord = client.users.cache.get(entry[0]);
 
-      sorted.forEach((entry, index) => {
-        const userIdFromData = entry[0];
-        const userData = entry[1];
-        const discordUser = client.users.cache.get(userIdFromData);
-
-        text += `${index + 1}. ${userData.epic || 'Not Set'} (${discordUser?.tag || 'Unknown'}) — ${userData.points} pts\n`;
+        text += `${i + 1}. ${u.epic} (${discord?.tag}) — ${u.points} pts\n`;
       });
 
-      await interaction.reply(text);
-      return;
+      return interaction.reply(text);
     }
   }
 
   if (interaction.isButton()) {
     const userId = interaction.user.id;
 
-    if (!data[userId] || !data[userId].active || !data[userId].activeId) {
-      await interaction.reply({
-        content: '❌ You do not have an active challenge.',
+    if (!data[userId] || !data[userId].activeId) {
+      return interaction.reply({
+        content: '❌ No active challenge',
         ephemeral: true
       });
-      return;
     }
 
-    const expectedButtonId = `complete_${data[userId].activeId}`;
-
-    if (interaction.customId !== expectedButtonId) {
-      await interaction.reply({
-        content: '❌ That is an old challenge button. Use the button on your current challenge.',
+    if (interaction.customId !== `complete_${data[userId].activeId}`) {
+      return interaction.reply({
+        content: '❌ Old button',
         ephemeral: true
       });
-      return;
     }
 
     const difficulty = data[userId].active;
     const points = pointsMap[difficulty];
-    const completedText = data[userId].activeText;
 
     data[userId].points += points;
-    data[userId].lastCompleted[difficulty] = completedText;
+    data[userId].lastCompleted[difficulty] = data[userId].activeText;
+
     data[userId].active = null;
     data[userId].activeText = null;
     data[userId].activeId = null;
+
     saveData();
 
     const disabledRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId('completed_done')
-        .setLabel('Completed')
+        .setCustomId('done')
+        .setLabel('Challenge Completed')
         .setStyle(ButtonStyle.Success)
         .setDisabled(true)
     );
 
-    await interaction.update({
-      content: `🔥 ${interaction.user} completed their challenge and earned **${points} points!**`,
+    return interaction.update({
+      content: `🔥 +${points} points`,
       embeds: [],
       components: [disabledRow]
     });
