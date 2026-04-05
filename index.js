@@ -170,21 +170,171 @@ const challenges = {
     'Open 5 chests',
     'Survive 5 minutes',
     'Use 2 healing items in one match',
-    'Break 10 objects with your pickaxe'
+    'Break 10 objects with your pickaxe',
+    'Thank the bus driver',
+    'Land at a named POI',
+    'Search 3 ammo boxes',
+    'Harvest 200 materials',
+    'Travel 500 meters in a vehicle',
+    'Revive a teammate',
+    'Reboot a teammate',
+    'Catch 1 fish',
+    'Use a zipline',
+    'Use 1 shield item',
+    'Deal 100 damage with an AR',
+    'Deal 50 damage with an SMG',
+    'Open 3 produce boxes',
+    'Hide in a bush for 10 seconds',
+    'Mark an enemy item or location',
+    'Use a launch pad',
+    'Collect 2 weapons of different rarities',
+    'Open 1 supply drone or loot cache',
+    'Destroy 5 trees',
+    'Travel 250 meters by swimming',
+    'Thank the bus driver and survive storm phase 1',
+    'Open 2 coolers',
+    'Use a medkit',
+    'Use bandages or a med mist',
+    'Spend 100 gold bars',
+    'Hire an NPC',
+    'Talk to 1 NPC',
+    'Use a vending machine',
+    'Deal 100 damage to opponents in one match',
+    'Land and survive 3 storm circles',
+    'Open 1 rare chest',
+    'Break 5 structures with a vehicle',
+    'Use a mobility item',
+    'Travel 250 meters while sliding',
+    'Travel 100 meters while crouched',
+    'Collect a shotgun and an AR in the same match',
+    'Search 2 floor loot items in 30 seconds after landing',
+    'Heal 50 health in storm',
+    'Travel from one POI to another in a single match',
+    'Use 1 healing item after taking storm damage',
+    'Open 7 containers total in one match',
+    'Damage an enemy vehicle',
+    'Ping 3 locations for your team',
+    'Survive until top 50',
+    'Open 2 chests in the same building',
+    'Carry a common weapon for 2 minutes',
+    'Use 1 throwable item',
+    'Visit a landmark',
+    'Travel 300 meters on foot without sprinting',
+    'Destroy 3 pieces of furniture'
   ],
   medium: [
     'Get 3 eliminations',
     'Reach top 10',
     'Travel through 3 POIs',
     'Win a fight using only AR + shotgun',
-    'Use no heals until after your first fight'
+    'Use no heals until after your first fight',
+    'Get 2 eliminations in a named POI',
+    'Deal 500 total damage in one match',
+    'Open 10 chests',
+    'Revive a teammate and survive to top 15',
+    'Reboot a teammate and get an elimination after',
+    'Use 3 different weapon types in one match',
+    'Get an elimination with an SMG',
+    'Get an elimination with a shotgun',
+    'Get an elimination with an AR',
+    'Travel 2000 meters in one match',
+    'Use 2 mobility items in one match',
+    'Reach top 15 without using a vehicle',
+    'Collect 3 shield items in one match',
+    'Win your first off-spawn fight',
+    'Eliminate an opponent within 60 seconds of landing',
+    'Deal 250 damage from above',
+    'Damage opponents at 2 different named POIs',
+    'Open 2 rare chests in one match',
+    'Carry only blue rarity or lower weapons',
+    'Use no sniper weapons for the entire match',
+    'Get 1 elimination after using a mobility item',
+    'Land hot and survive 5 minutes',
+    'Complete a bounty',
+    'Survive 8 storm circles',
+    'Get an elimination with a pistol or sidearm',
+    'Get 3 assists or eliminations combined in team modes',
+    'Use only weapons found from chests',
+    'Use only floor loot weapons',
+    'Heal for 150 total in one match',
+    'Travel from edge zone to center zone in one match',
+    'Break 25 objects in one match',
+    'Get an elimination while inside storm circle 4 or later',
+    'Reach top 5 with at least 2 eliminations',
+    'Carry one weapon from landing to endgame',
+    'Use 3 healing items in one match',
+    'Eliminate a player using a vehicle or after exiting one',
+    'Mark enemies or items 5 times in one match',
+    'Spend 500 gold bars',
+    'Buy an item and get an elimination with it',
+    'Survive without shields until top 25',
+    'Travel 500 meters while sliding or sprinting during combat',
+    'Open 15 containers in one match',
+    'Get 2 eliminations without reloading between them',
+    'Use only two weapon slots the whole match',
+    'Deal 300 damage with scoped weapons',
+    'Reach top 10 after landing at the hottest POI you see',
+    'Get 1 elimination in storm',
+    'Damage an opponent with 3 different weapons in one match',
+    'Use no medkits the whole match',
+    'Get a squad wipe with your team involved'
   ],
   hard: [
     'Get 5 eliminations',
     'Win a match',
     'No heals the entire game',
     'Only use loot from your first building',
-    'Reach top 3 without using shields'
+    'Reach top 3 without using shields',
+    'Win a match with 5 eliminations',
+    'Get 7 eliminations in one match',
+    'Win without using a vehicle',
+    'Win using only blue rarity or lower loot',
+    'Get 3 eliminations before leaving your drop POI',
+    'Reach top 5 with no more than 2 weapons',
+    'Use only floor loot and win a fight',
+    'Use only chest loot and reach top 10',
+    'Get a shotgun-only win fight',
+    'Get an AR-only win fight',
+    'Get 2 eliminations in final circles',
+    'Reach top 3 after landing at the map edge',
+    'Travel across 5 POIs and reach top 10',
+    'Get 1 elimination with no shields all match',
+    'Win a trios or squads game with at least 1 reboot',
+    'Get 5 eliminations without carrying an SMG',
+    'Get 5 eliminations without carrying a shotgun',
+    'Get 5 eliminations without carrying an AR',
+    'Reach top 5 while carrying one common weapon',
+    'No heals until top 10 and still reach top 3',
+    'Eliminate a full duo or squad with your team',
+    'Survive to top 5 after being rebooted',
+    'Get back-to-back eliminations within 30 seconds',
+    'Deal 1000 damage in one match',
+    'Win without buying anything from NPCs or vending machines',
+    'Use only your first two weapons for the whole match',
+    'Get 2 eliminations while in storm and survive',
+    'Reach top 3 without opening more than 5 chests',
+    'Land hot, get 4 eliminations, and reach top 10',
+    'Get 1 crowned elimination if crowns are in game',
+    'Win using only weapons from eliminated players',
+    'Reach top 5 without sprinting',
+    'Get an elimination in 3 different POIs in one match',
+    'Use no mobility items and reach top 3',
+    'Get 6 eliminations with at least 3 different weapon types',
+    'Survive from your landing spot to endgame without rotating by vehicle',
+    'Get 4 eliminations before storm circle 3 closes',
+    'Win after starting the match with no shields equipped until midgame',
+    'Reach top 3 after completing a bounty',
+    'Use only two heals for the entire match and reach top 5',
+    'Get 5 eliminations while carrying a pistol or sidearm all game',
+    'No reload challenge: get an elimination after swapping weapons instead of reloading',
+    'Reach top 5 after landing at the first POI under the bus route',
+    'Get a final zone elimination for the win',
+    'Win with your squad and be top damage on the team',
+    'Reach top 3 while using no hired NPCs',
+    'Get 3 eliminations with headshots',
+    'Carry a grey or green weapon into final circle',
+    'Win after rerouting through 4 named locations',
+    'Take no storm damage for the entire match and reach top 3'
   ]
 };
 
@@ -259,6 +409,26 @@ function buildReviewButtons(userId, challengeId, disabled = false) {
       .setLabel('Reject')
       .setStyle(ButtonStyle.Danger)
       .setDisabled(disabled)
+  );
+}
+
+function buildLfgButtons(hostId, closed = false) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`lfgjoin_${hostId}`)
+      .setLabel('Join')
+      .setStyle(ButtonStyle.Success)
+      .setDisabled(closed),
+    new ButtonBuilder()
+      .setCustomId(`lfginterested_${hostId}`)
+      .setLabel('Interested')
+      .setStyle(ButtonStyle.Primary)
+      .setDisabled(closed),
+    new ButtonBuilder()
+      .setCustomId(`lfgfull_${hostId}`)
+      .setLabel(closed ? 'Full' : 'Mark Full')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(closed)
   );
 }
 
@@ -348,6 +518,52 @@ const commands = [
           { name: 'Zero Build', value: 'Zero Build' },
           { name: 'Ranked', value: 'Ranked' }
         )
+    )
+    .addStringOption(option =>
+      option
+        .setName('region')
+        .setDescription('Your region')
+        .setRequired(true)
+        .addChoices(
+          { name: 'NA East', value: 'NA East' },
+          { name: 'NA Central', value: 'NA Central' },
+          { name: 'NA West', value: 'NA West' },
+          { name: 'Europe', value: 'Europe' },
+          { name: 'Brazil', value: 'Brazil' },
+          { name: 'Asia', value: 'Asia' },
+          { name: 'Middle East', value: 'Middle East' },
+          { name: 'Oceania', value: 'Oceania' }
+        )
+    )
+    .addStringOption(option =>
+      option
+        .setName('mic')
+        .setDescription('Mic required?')
+        .setRequired(true)
+        .addChoices(
+          { name: 'Mic On', value: 'Mic On' },
+          { name: 'No Mic Needed', value: 'No Mic Needed' }
+        )
+    )
+    .addIntegerOption(option =>
+      option
+        .setName('players_needed')
+        .setDescription('How many players do you need?')
+        .setRequired(true)
+        .setMinValue(1)
+        .setMaxValue(3)
+    )
+    .addStringOption(option =>
+      option
+        .setName('rank')
+        .setDescription('Optional rank')
+        .setRequired(false)
+    )
+    .addStringOption(option =>
+      option
+        .setName('note')
+        .setDescription('Optional note for your post')
+        .setRequired(false)
     ),
 
   new SlashCommandBuilder()
@@ -581,9 +797,7 @@ client.on(Events.MessageCreate, async message => {
       embeds: [forwardEmbed]
     });
 
-    await message.reply(
-      '📩 Your reply was sent to the staff team.'
-    );
+    await message.reply('📩 Your reply was sent to the staff team.');
   } catch (err) {
     console.error('DM handler error:', err);
 
@@ -650,18 +864,34 @@ client.on(Events.InteractionCreate, async interaction => {
 
       if (interaction.commandName === 'lfg') {
         const mode = interaction.options.getString('mode');
+        const region = interaction.options.getString('region');
+        const mic = interaction.options.getString('mic');
+        const playersNeeded = interaction.options.getInteger('players_needed');
+        const rank = interaction.options.getString('rank') || 'Any';
+        const note = interaction.options.getString('note') || 'No extra notes.';
+        const epicName = userData.epic || 'Not set — use /setepic';
 
         const embed = new EmbedBuilder()
-          .setTitle('🎮 LFG')
+          .setTitle('🎮 LFG - Looking for Teammates')
           .setColor('Blue')
-          .setDescription(`${interaction.user} is looking for teammates`)
+          .setDescription(`${interaction.user} is looking for teammates.`)
           .addFields(
             { name: 'Mode', value: mode, inline: true },
-            { name: 'Host', value: interaction.user.tag, inline: true }
+            { name: 'Region', value: region, inline: true },
+            { name: 'Mic', value: mic, inline: true },
+            { name: 'Players Needed', value: `${playersNeeded}`, inline: true },
+            { name: 'Rank', value: rank, inline: true },
+            { name: 'Epic Username', value: epicName, inline: true },
+            { name: 'Host', value: interaction.user.tag, inline: true },
+            { name: 'Note', value: note, inline: false }
           )
+          .setFooter({ text: 'Use the buttons below to join or show interest.' })
           .setTimestamp();
 
-        await interaction.reply({ embeds: [embed] });
+        await interaction.reply({
+          embeds: [embed],
+          components: [buildLfgButtons(interaction.user.id)]
+        });
         return;
       }
 
@@ -1177,6 +1407,64 @@ client.on(Events.InteractionCreate, async interaction => {
           content: '❌ Challenge cancelled.',
           embeds: [],
           components: []
+        });
+        return;
+      }
+
+      if (action === 'lfgjoin') {
+        const hostId = parts[0];
+
+        if (interaction.user.id === hostId) {
+          await interaction.reply({
+            content: '❌ You are the host of this LFG post.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        await interaction.reply({
+          content: `✅ You joined this LFG. <@${hostId}>, <@${interaction.user.id}> wants to squad up.`,
+          ephemeral: false
+        });
+        return;
+      }
+
+      if (action === 'lfginterested') {
+        const hostId = parts[0];
+
+        if (interaction.user.id === hostId) {
+          await interaction.reply({
+            content: '❌ You are the host of this LFG post.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        await interaction.reply({
+          content: `👀 <@${interaction.user.id}> is interested in teaming with <@${hostId}>.`,
+          ephemeral: false
+        });
+        return;
+      }
+
+      if (action === 'lfgfull') {
+        const hostId = parts[0];
+
+        if (interaction.user.id !== hostId && !isStaff(interaction.member)) {
+          await interaction.reply({
+            content: '❌ Only the host or staff can mark this LFG as full.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        await interaction.update({
+          components: [buildLfgButtons(hostId, true)]
+        });
+
+        await interaction.followUp({
+          content: `🚫 This LFG is now full.`,
+          ephemeral: false
         });
         return;
       }
