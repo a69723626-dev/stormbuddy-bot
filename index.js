@@ -16,11 +16,18 @@ const {
   TextInputBuilder,
   TextInputStyle,
   PermissionsBitField,
-  ChannelType
+  ChannelType,
+  Partials
 } = require('discord.js');
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.DirectMessages,
+    GatewayIntentBits.MessageContent
+  ],
+  partials: [Partials.Channel]
 });
 
 const TOKEN = process.env.DISCORD_TOKEN;
@@ -514,6 +521,77 @@ client.on(Events.GuildMemberAdd, member => {
 
   if (channel) {
     channel.send(`Welcome ${member} to Crash & Play Lounge! 🎮`);
+  }
+});
+
+client.on(Events.MessageCreate, async message => {
+  try {
+    if (message.author.bot) return;
+    if (message.guild) return;
+
+    console.log(`DM from ${message.author.tag}: ${message.content}`);
+
+    const guild = await client.guilds.fetch(GUILD_ID).catch(() => null);
+    if (!guild) {
+      await message.reply('❌ I could not find the server.');
+      return;
+    }
+
+    await guild.channels.fetch();
+
+    const userRepliesChannel =
+      guild.channels.cache.find(
+        c => c.type === ChannelType.GuildText && c.name === 'user-replies'
+      ) ||
+      guild.channels.cache.find(
+        c => c.type === ChannelType.GuildText && c.name === 'user replies'
+      );
+
+    if (!userRepliesChannel) {
+      await message.reply('❌ I could not find the #user-replies channel in the server.');
+      return;
+    }
+
+    const member = await guild.members.fetch(message.author.id).catch(() => null);
+    const storedUser = data.users[message.author.id];
+
+    const forwardEmbed = new EmbedBuilder()
+      .setTitle('📩 User Reply')
+      .setColor('Blue')
+      .setDescription(message.content || '*No text content*')
+      .addFields(
+        { name: 'User', value: `${message.author.tag}`, inline: true },
+        { name: 'Discord ID', value: `${message.author.id}`, inline: true },
+        { name: 'Epic', value: storedUser?.epic || 'Not set', inline: true },
+        { name: 'In Server', value: member ? 'Yes' : 'No', inline: true }
+      )
+      .setTimestamp();
+
+    if (message.attachments.size > 0) {
+      const attachmentList = message.attachments.map(a => a.url).join('\n');
+      forwardEmbed.addFields({
+        name: 'Attachments',
+        value: attachmentList.slice(0, 1024),
+        inline: false
+      });
+    }
+
+    await userRepliesChannel.send({
+      content: `📨 New DM from <@${message.author.id}>`,
+      embeds: [forwardEmbed]
+    });
+
+    await message.reply(
+      '📩 Your reply was sent to the staff team.'
+    );
+  } catch (err) {
+    console.error('DM handler error:', err);
+
+    try {
+      await message.reply('❌ Something broke while sending your reply to staff.');
+    } catch (replyErr) {
+      console.error('Failed to reply in DM:', replyErr);
+    }
   }
 });
 
