@@ -460,6 +460,16 @@ const commands = [
     ),
 
   new SlashCommandBuilder()
+    .setName('clearchallenge')
+    .setDescription('Clear a user’s stuck active challenge')
+    .addUserOption(option =>
+      option
+        .setName('user')
+        .setDescription('The user whose challenge you want to clear')
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
     .setName('resetleaderboard')
     .setDescription('Reset all leaderboard points to 0')
 ].map(c => c.toJSON());
@@ -532,6 +542,7 @@ client.on(Events.InteractionCreate, async interaction => {
                 '`/setuserpoints`',
                 '`/addpoints`',
                 '`/removepoints`',
+                '`/clearchallenge`',
                 '`/resetleaderboard`'
               ].join('\n')
             }
@@ -731,6 +742,49 @@ client.on(Events.InteractionCreate, async interaction => {
         saveData();
 
         await interaction.reply(`❌ Removed **${amount}** points from **${targetUser.tag}**.\nNew total: **${targetUserData.points}**`);
+        return;
+      }
+
+      if (interaction.commandName === 'clearchallenge') {
+        if (!isStaff(interaction.member)) {
+          await interaction.reply({
+            content: '❌ Only admins or mods can use this.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        const targetUser = interaction.options.getUser('user');
+        const targetUserData = ensureUser(targetUser.id);
+
+        if (!targetUserData.activeChallenge) {
+          await interaction.reply({
+            content: `ℹ️ **${targetUser.tag}** does not currently have an active challenge.`,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const oldChallenge = targetUserData.activeChallenge;
+
+        if (oldChallenge.sourceChannelId && oldChallenge.sourceMessageId) {
+          const clearedChallenge = {
+            ...oldChallenge,
+            status: 'cancelled'
+          };
+
+          await updateOriginalChallengeMessage(targetUserData, clearedChallenge, {
+            content: '🧹 This challenge was cleared by staff.',
+            components: [buildChallengeButtons(clearedChallenge.id, false, true)]
+          });
+        }
+
+        targetUserData.activeChallenge = null;
+        saveData();
+
+        await interaction.reply({
+          content: `✅ Cleared the active challenge for **${targetUser.tag}**. They can now use \`/challenge\` again.`
+        });
         return;
       }
 
