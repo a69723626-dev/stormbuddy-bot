@@ -34,6 +34,7 @@ const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 const REVIEW_CHANNEL_ID = '1490076952122622003';
+const PURCHASES_CHANNEL_ID = 'PASTE_CHANNEL_ID_HERE';
 
 const DATA_FILE = './data.json';
 const DAILY_POINTS = 15;
@@ -1550,19 +1551,60 @@ client.on(Events.InteractionCreate, async interaction => {
         }
 
         userData.points -= item.cost;
-        userData.purchaseHistory.push({
+
+        const purchaseRecord = {
           id: makeId(),
           itemId: item.id,
           itemName: item.name,
           cost: item.cost,
           purchasedAt: Date.now()
-        });
+        };
+
+        userData.purchaseHistory.push(purchaseRecord);
         saveData();
 
         await interaction.update({
           embeds: [buildShopEmbed(userData)],
           components: [buildShopButtons(userData)]
         });
+
+        let purchasesChannel = null;
+
+        try {
+          purchasesChannel = await client.channels.fetch(PURCHASES_CHANNEL_ID);
+        } catch (err) {
+          console.error('Could not fetch purchases channel:', err);
+        }
+
+        if (
+          purchasesChannel &&
+          (purchasesChannel.type === ChannelType.GuildText ||
+            purchasesChannel.type === ChannelType.PublicThread ||
+            purchasesChannel.type === ChannelType.PrivateThread ||
+            purchasesChannel.type === ChannelType.AnnouncementThread)
+        ) {
+          const purchaseEmbed = new EmbedBuilder()
+            .setTitle('🛒 New Shop Purchase')
+            .setColor('Gold')
+            .setDescription(`<@${interaction.user.id}> bought an item from the StormBuddy shop.`)
+            .addFields(
+              { name: 'User', value: `${interaction.user.tag}`, inline: true },
+              { name: 'Discord ID', value: `${interaction.user.id}`, inline: true },
+              { name: 'Epic', value: userData.epic || 'Not set', inline: true },
+              { name: 'Item', value: item.name, inline: true },
+              { name: 'Cost', value: `${item.cost} points`, inline: true },
+              { name: 'Points Left', value: `${userData.points}`, inline: true },
+              { name: 'Description', value: item.description, inline: false }
+            )
+            .setFooter({ text: `Purchase ID: ${purchaseRecord.id}` })
+            .setTimestamp();
+
+          await purchasesChannel.send({ embeds: [purchaseEmbed] }).catch(err => {
+            console.error('Failed to send purchase log:', err);
+          });
+        } else {
+          console.error('Purchases channel not found or is not a supported text channel.');
+        }
 
         await interaction.followUp({
           content: `✅ You bought **${item.name}** for **${item.cost}** points.\nYou now have **${userData.points}** points left.`,
