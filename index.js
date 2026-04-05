@@ -75,6 +75,7 @@ function ensureUser(userId) {
       points: 0,
       activeChallenge: null,
       dailyClaimedAt: null,
+      purchaseHistory: [],
       completedChallenges: {
         easy: [],
         medium: [],
@@ -113,6 +114,10 @@ function ensureUser(userId) {
 
   if (!('dailyClaimedAt' in user)) {
     user.dailyClaimedAt = null;
+  }
+
+  if (!Array.isArray(user.purchaseHistory)) {
+    user.purchaseHistory = [];
   }
 
   if (!user.stats) {
@@ -337,6 +342,91 @@ const challenges = {
     'Take no storm damage for the entire match and reach top 3'
   ]
 };
+
+const shopItems = [
+  {
+    id: 'giveaway',
+    name: 'Giveaway Entry',
+    cost: 25,
+    description: 'Buy 1 extra giveaway entry.'
+  },
+  {
+    id: 'vip',
+    name: 'VIP LFG Ping',
+    cost: 40,
+    description: 'Get 1 priority LFG shoutout from staff.'
+  },
+  {
+    id: 'mystery',
+    name: 'Mystery Box',
+    cost: 60,
+    description: 'Random surprise reward from staff.'
+  },
+  {
+    id: 'customrole',
+    name: 'Custom Role Request',
+    cost: 100,
+    description: 'Request a custom server role from staff.'
+  },
+  {
+    id: 'featuredclip',
+    name: 'Featured Clip Submission',
+    cost: 75,
+    description: 'Submit 1 clip for featured clip review.'
+  }
+];
+
+function getShopItem(itemId) {
+  return shopItems.find(item => item.id === itemId) || null;
+}
+
+function buildShopEmbed(userData) {
+  const embed = new EmbedBuilder()
+    .setTitle('🛒 StormBuddy Shop')
+    .setColor('Gold')
+    .setDescription(`You currently have **${userData.points}** points.\nSpend them on rewards below.`)
+    .setFooter({ text: 'Purchases are logged by StormBuddy.' });
+
+  for (const item of shopItems) {
+    embed.addFields({
+      name: `${item.name} — ${item.cost} pts`,
+      value: item.description,
+      inline: false
+    });
+  }
+
+  return embed;
+}
+
+function buildShopButtons(userData) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('buy_giveaway')
+      .setLabel('Giveaway')
+      .setStyle(ButtonStyle.Primary)
+      .setDisabled(userData.points < getShopItem('giveaway').cost),
+    new ButtonBuilder()
+      .setCustomId('buy_vip')
+      .setLabel('VIP Ping')
+      .setStyle(ButtonStyle.Primary)
+      .setDisabled(userData.points < getShopItem('vip').cost),
+    new ButtonBuilder()
+      .setCustomId('buy_mystery')
+      .setLabel('Mystery Box')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(userData.points < getShopItem('mystery').cost),
+    new ButtonBuilder()
+      .setCustomId('buy_customrole')
+      .setLabel('Custom Role')
+      .setStyle(ButtonStyle.Success)
+      .setDisabled(userData.points < getShopItem('customrole').cost),
+    new ButtonBuilder()
+      .setCustomId('buy_featuredclip')
+      .setLabel('Featured Clip')
+      .setStyle(ButtonStyle.Success)
+      .setDisabled(userData.points < getShopItem('featuredclip').cost)
+  );
+}
 
 function makeId() {
   return Math.random().toString(36).slice(2, 10);
@@ -624,6 +714,10 @@ const commands = [
     .setDescription('Show the challenge leaderboard'),
 
   new SlashCommandBuilder()
+    .setName('shop')
+    .setDescription('Spend your StormBuddy points in the shop'),
+
+  new SlashCommandBuilder()
     .setName('setpoints')
     .setDescription('Change challenge points for a difficulty')
     .addStringOption(option =>
@@ -866,6 +960,7 @@ client.on(Events.InteractionCreate, async interaction => {
                 '`/daily` — claim daily bonus points',
                 '`/profile` — view stats',
                 '`/leaderboard` — top players',
+                '`/shop` — spend your points',
                 '`/lfg` — find teammates'
               ].join('\n')
             },
@@ -1013,6 +1108,51 @@ client.on(Events.InteractionCreate, async interaction => {
           .setTimestamp();
 
         await interaction.reply({ embeds: [embed] });
+        return;
+      }
+
+      if (interaction.commandName === 'leaderboard') {
+        const sorted = Object.entries(data.users)
+          .sort((a, b) => (b[1].points || 0) - (a[1].points || 0))
+          .slice(0, 10);
+
+        if (sorted.length === 0) {
+          await interaction.reply('📉 No leaderboard yet.');
+          return;
+        }
+
+        let desc = '';
+
+        for (let index = 0; index < sorted.length; index++) {
+          const [id, user] = sorted[index];
+          const discordUser = await client.users.fetch(id).catch(() => null);
+          const discordName = discordUser?.username || 'Unknown';
+          const epicName = user.epic || 'Not set';
+
+          const medal =
+            index === 0 ? '🥇' :
+            index === 1 ? '🥈' :
+            index === 2 ? '🥉' : '•';
+
+          desc += `${medal} **${index + 1}. ${epicName}** (${discordName}) — ${user.points || 0} pts\n`;
+        }
+
+        const embed = new EmbedBuilder()
+          .setTitle('🏆 Leaderboard')
+          .setColor('Gold')
+          .setDescription(desc)
+          .setFooter({ text: 'Keep grinding those challenges.' });
+
+        await interaction.reply({ embeds: [embed] });
+        return;
+      }
+
+      if (interaction.commandName === 'shop') {
+        await interaction.reply({
+          embeds: [buildShopEmbed(userData)],
+          components: [buildShopButtons(userData)],
+          ephemeral: true
+        });
         return;
       }
 
@@ -1382,46 +1522,55 @@ client.on(Events.InteractionCreate, async interaction => {
 
         return;
       }
-
-      if (interaction.commandName === 'leaderboard') {
-        const sorted = Object.entries(data.users)
-          .sort((a, b) => (b[1].points || 0) - (a[1].points || 0))
-          .slice(0, 10);
-
-        if (sorted.length === 0) {
-          await interaction.reply('📉 No leaderboard yet.');
-          return;
-        }
-
-        let desc = '';
-
-        for (let index = 0; index < sorted.length; index++) {
-          const [id, user] = sorted[index];
-          const discordUser = await client.users.fetch(id).catch(() => null);
-          const discordName = discordUser?.username || 'Unknown';
-          const epicName = user.epic || 'Not set';
-
-          const medal =
-            index === 0 ? '🥇' :
-            index === 1 ? '🥈' :
-            index === 2 ? '🥉' : '•';
-
-          desc += `${medal} **${index + 1}. ${epicName}** (${discordName}) — ${user.points || 0} pts\n`;
-        }
-
-        const embed = new EmbedBuilder()
-          .setTitle('🏆 Leaderboard')
-          .setColor('Gold')
-          .setDescription(desc)
-          .setFooter({ text: 'Keep grinding those challenges.' });
-
-        await interaction.reply({ embeds: [embed] });
-        return;
-      }
     }
 
     if (interaction.isButton()) {
       const [action, ...parts] = interaction.customId.split('_');
+
+      if (action === 'buy') {
+        const itemId = parts[0];
+        const userId = interaction.user.id;
+        const userData = ensureUser(userId);
+        const item = getShopItem(itemId);
+
+        if (!item) {
+          await interaction.reply({
+            content: '❌ That shop item does not exist.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (userData.points < item.cost) {
+          await interaction.reply({
+            content: `❌ You need **${item.cost}** points for **${item.name}**, but you only have **${userData.points}**.`,
+            ephemeral: true
+          });
+          return;
+        }
+
+        userData.points -= item.cost;
+        userData.purchaseHistory.push({
+          id: makeId(),
+          itemId: item.id,
+          itemName: item.name,
+          cost: item.cost,
+          purchasedAt: Date.now()
+        });
+        saveData();
+
+        await interaction.update({
+          embeds: [buildShopEmbed(userData)],
+          components: [buildShopButtons(userData)]
+        });
+
+        await interaction.followUp({
+          content: `✅ You bought **${item.name}** for **${item.cost}** points.\nYou now have **${userData.points}** points left.`,
+          ephemeral: true
+        });
+
+        return;
+      }
 
       if (action === 'submit') {
         const challengeId = parts[0];
