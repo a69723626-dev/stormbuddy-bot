@@ -600,6 +600,16 @@ const commands = [
     .setDescription('Claim your daily StormBuddy points'),
 
   new SlashCommandBuilder()
+    .setName('claimdailyfor')
+    .setDescription('Claim daily StormBuddy points for another user')
+    .addUserOption(option =>
+      option
+        .setName('user')
+        .setDescription('The user to claim daily points for')
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
     .setName('profile')
     .setDescription('View your StormBuddy profile or someone else’s')
     .addUserOption(option =>
@@ -679,6 +689,22 @@ const commands = [
       option
         .setName('amount')
         .setDescription('How many points to remove')
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName('setepicuser')
+    .setDescription('Set another user’s Epic username')
+    .addUserOption(option =>
+      option
+        .setName('user')
+        .setDescription('The user whose Epic you want to set')
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option
+        .setName('username')
+        .setDescription('The Epic username to set')
         .setRequired(true)
     ),
 
@@ -834,7 +860,7 @@ client.on(Events.InteractionCreate, async interaction => {
             {
               name: 'Player Commands',
               value: [
-                '`/setepic` — set your Epic username',
+                '`/setepic` — set your own Epic username',
                 '`/challenge` — get a challenge',
                 '`/reroll` — reroll your active challenge once',
                 '`/daily` — claim daily bonus points',
@@ -850,6 +876,8 @@ client.on(Events.InteractionCreate, async interaction => {
                 '`/setuserpoints`',
                 '`/addpoints`',
                 '`/removepoints`',
+                '`/setepicuser`',
+                '`/claimdailyfor`',
                 '`/senddm`',
                 '`/clearchallenge`',
                 '`/resetleaderboard`'
@@ -924,6 +952,40 @@ client.on(Events.InteractionCreate, async interaction => {
         saveData();
 
         await interaction.reply(`🎁 You claimed your daily reward and earned **${DAILY_POINTS}** points! You now have **${userData.points}** points.`);
+        return;
+      }
+
+      if (interaction.commandName === 'claimdailyfor') {
+        if (!isStaff(interaction.member)) {
+          await interaction.reply({
+            content: '❌ Only admins or mods can use this.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        const targetUser = interaction.options.getUser('user');
+        const targetUserData = ensureUser(targetUser.id);
+
+        const now = Date.now();
+        const lastClaim = targetUserData.dailyClaimedAt || 0;
+        const cooldown = 24 * 60 * 60 * 1000;
+        const remaining = cooldown - (now - lastClaim);
+
+        if (remaining > 0) {
+          await interaction.reply({
+            content: `⏳ **${targetUser.tag}** already claimed their daily reward. Try again in **${formatCooldown(remaining)}**.`,
+            ephemeral: true
+          });
+          return;
+        }
+
+        targetUserData.points += DAILY_POINTS;
+        targetUserData.dailyClaimedAt = now;
+        targetUserData.stats.dailyClaims += 1;
+        saveData();
+
+        await interaction.reply(`🎁 Claimed daily reward for **${targetUser.tag}**. They earned **${DAILY_POINTS}** points and now have **${targetUserData.points}** points.`);
         return;
       }
 
@@ -1067,6 +1129,28 @@ client.on(Events.InteractionCreate, async interaction => {
         saveData();
 
         await interaction.reply(`❌ Removed **${amount}** points from **${targetUser.tag}**.\nNew total: **${targetUserData.points}**`);
+        return;
+      }
+
+      if (interaction.commandName === 'setepicuser') {
+        if (!isStaff(interaction.member)) {
+          await interaction.reply({
+            content: '❌ Only admins or mods can use this.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        const targetUser = interaction.options.getUser('user');
+        const username = interaction.options.getString('username');
+
+        const targetUserData = ensureUser(targetUser.id);
+        targetUserData.epic = username;
+        saveData();
+
+        await interaction.reply({
+          content: `✅ **${targetUser.tag}** now has Epic username set to **${username}**.`
+        });
         return;
       }
 
