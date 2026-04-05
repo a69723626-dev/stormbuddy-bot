@@ -460,6 +460,22 @@ const commands = [
     ),
 
   new SlashCommandBuilder()
+    .setName('senddm')
+    .setDescription('Send a DM to a user as StormBuddy')
+    .addUserOption(option =>
+      option
+        .setName('user')
+        .setDescription('User to DM')
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option
+        .setName('message')
+        .setDescription('Message to send')
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
     .setName('clearchallenge')
     .setDescription('Clear a user’s stuck active challenge')
     .addUserOption(option =>
@@ -542,6 +558,7 @@ client.on(Events.InteractionCreate, async interaction => {
                 '`/setuserpoints`',
                 '`/addpoints`',
                 '`/removepoints`',
+                '`/senddm`',
                 '`/clearchallenge`',
                 '`/resetleaderboard`'
               ].join('\n')
@@ -742,6 +759,44 @@ client.on(Events.InteractionCreate, async interaction => {
         saveData();
 
         await interaction.reply(`❌ Removed **${amount}** points from **${targetUser.tag}**.\nNew total: **${targetUserData.points}**`);
+        return;
+      }
+
+      if (interaction.commandName === 'senddm') {
+        if (!isStaff(interaction.member)) {
+          await interaction.reply({
+            content: '❌ Only admins or mods can use this.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        const targetUser = interaction.options.getUser('user');
+        const message = interaction.options.getString('message');
+
+        try {
+          const dmEmbed = new EmbedBuilder()
+            .setTitle('📩 Message from StormBuddy')
+            .setColor('Blue')
+            .setDescription(message)
+            .setFooter({ text: `Sent by ${interaction.user.tag}` })
+            .setTimestamp();
+
+          await targetUser.send({ embeds: [dmEmbed] });
+
+          await interaction.reply({
+            content: `✅ Sent a DM to **${targetUser.tag}**.`,
+            ephemeral: true
+          });
+        } catch (err) {
+          console.error('Failed to send DM:', err);
+
+          await interaction.reply({
+            content: `❌ I couldn't DM **${targetUser.tag}**. They may have DMs closed.`,
+            ephemeral: true
+          });
+        }
+
         return;
       }
 
