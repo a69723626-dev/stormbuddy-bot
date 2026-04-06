@@ -1,6 +1,7 @@
 require('dotenv').config();
 
 const fs = require('fs');
+const path = require('path');
 const {
   Client,
   GatewayIntentBits,
@@ -36,7 +37,12 @@ const GUILD_ID = process.env.GUILD_ID;
 const REVIEW_CHANNEL_ID = '1490076952122622003';
 const PURCHASES_CHANNEL_ID = '1490394016258859691';
 
-const DATA_FILE = './data.json';
+const DATA_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || path.join(__dirname, 'data');
+const DATA_FILE = path.join(DATA_DIR, 'data.json');
+
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
 const DAILY_POINTS = 15;
 const DUEL_POINTS = {
   easy: 15,
