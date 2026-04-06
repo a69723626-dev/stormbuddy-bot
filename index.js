@@ -34,13 +34,19 @@ const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 const REVIEW_CHANNEL_ID = '1490076952122622003';
-const PURCHASES_CHANNEL_ID = '1490394016250859691';
+const PURCHASES_CHANNEL_ID = '1490394016258859691';
 
 const DATA_FILE = './data.json';
 const DAILY_POINTS = 15;
+const DUEL_POINTS = {
+  easy: 15,
+  medium: 35,
+  hard: 75
+};
 
 let data = {
   users: {},
+  duels: {},
   settings: {
     easy: 10,
     medium: 25,
@@ -54,6 +60,7 @@ if (fs.existsSync(DATA_FILE)) {
 
     data = {
       users: existing.users || {},
+      duels: existing.duels || {},
       settings: {
         easy: existing.settings?.easy ?? 10,
         medium: existing.settings?.medium ?? 25,
@@ -75,6 +82,7 @@ function ensureUser(userId) {
       epic: null,
       points: 0,
       activeChallenge: null,
+      activeDuelId: null,
       dailyClaimedAt: null,
       purchaseHistory: [],
       completedChallenges: {
@@ -86,7 +94,9 @@ function ensureUser(userId) {
         approvedChallenges: 0,
         rejectedProofs: 0,
         rerolls: 0,
-        dailyClaims: 0
+        dailyClaims: 0,
+        duelWins: 0,
+        duelLosses: 0
       }
     };
   }
@@ -113,6 +123,10 @@ function ensureUser(userId) {
     user.activeChallenge = null;
   }
 
+  if (!('activeDuelId' in user)) {
+    user.activeDuelId = null;
+  }
+
   if (!('dailyClaimedAt' in user)) {
     user.dailyClaimedAt = null;
   }
@@ -126,7 +140,9 @@ function ensureUser(userId) {
       approvedChallenges: 0,
       rejectedProofs: 0,
       rerolls: 0,
-      dailyClaims: 0
+      dailyClaims: 0,
+      duelWins: 0,
+      duelLosses: 0
     };
   }
 
@@ -144,6 +160,14 @@ function ensureUser(userId) {
 
   if (typeof user.stats.dailyClaims !== 'number') {
     user.stats.dailyClaims = 0;
+  }
+
+  if (typeof user.stats.duelWins !== 'number') {
+    user.stats.duelWins = 0;
+  }
+
+  if (typeof user.stats.duelLosses !== 'number') {
+    user.stats.duelLosses = 0;
   }
 
   if (user.activeChallenge) {
@@ -344,6 +368,32 @@ const challenges = {
   ]
 };
 
+const duelChallenges = {
+  easy: [
+    'First to 1 elimination in your next match',
+    'Higher placement in your next match',
+    'Most chests opened in your next match',
+    'Most damage dealt in your next match',
+    'First to survive 5 minutes in your next match'
+  ],
+  medium: [
+    'First to 3 eliminations in your next match',
+    'Most eliminations in your next match',
+    'Most damage dealt in your next match',
+    'Better placement in your next match',
+    'First to open 10 chests in your next match',
+    'First to survive until top 10 in your next match'
+  ],
+  hard: [
+    'First to 5 eliminations in your next match',
+    'Win a match before the other player',
+    'Most eliminations and better placement in your next match',
+    'First to reach top 5 with at least 3 eliminations',
+    'Most total damage in your next match',
+    'First to win an off-spawn fight and reach top 10'
+  ]
+};
+
 const shopItems = [
   {
     id: 'giveaway',
@@ -444,6 +494,12 @@ function pickChallenge(difficulty, completedList, excludeText = null) {
   return available[Math.floor(Math.random() * available.length)];
 }
 
+function pickDuelChallenge(difficulty) {
+  const pool = duelChallenges[difficulty] || [];
+  if (pool.length === 0) return null;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
 function buildChallengeEmbed(user, challengeObj) {
   const statusMap = {
     active: 'ACTIVE',
@@ -523,6 +579,73 @@ function buildLfgButtons(hostId, closed = false) {
   );
 }
 
+function buildDuelEmbed(duel) {
+  const statusMap = {
+    active: 'ACTIVE',
+    pending: 'PENDING REVIEW',
+    completed: 'COMPLETED',
+    cancelled: 'CANCELLED'
+  };
+
+  return new EmbedBuilder()
+    .setTitle('⚔️ Duel Challenge')
+    .setColor(
+      duel.status === 'completed'
+        ? 'Green'
+        : duel.status === 'pending'
+        ? 'Orange'
+        : duel.status === 'cancelled'
+        ? 'Red'
+        : 'Blurple'
+    )
+    .setDescription(`**${duel.challengeText}**`)
+    .addFields(
+      { name: 'Challenger', value: `<@${duel.challengerId}>`, inline: true },
+      { name: 'Opponent', value: `<@${duel.opponentId}>`, inline: true },
+      { name: 'Difficulty', value: duel.difficulty.toUpperCase(), inline: true },
+      { name: 'Reward', value: `${duel.points} points`, inline: true },
+      { name: 'Status', value: statusMap[duel.status] || duel.status.toUpperCase(), inline: true },
+      { name: 'Submitted By', value: duel.submittedBy ? `<@${duel.submittedBy}>` : 'No proof yet', inline: true }
+    )
+    .setFooter({ text: `Duel ID: ${duel.id}` })
+    .setTimestamp();
+}
+
+function buildDuelButtons(duelId, pending = false, disabled = false) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`duelsubmit_${duelId}`)
+      .setLabel(pending ? 'Proof Submitted' : 'Submit Proof')
+      .setStyle(ButtonStyle.Success)
+      .setDisabled(pending || disabled),
+    new ButtonBuilder()
+      .setCustomId(`duelcancel_${duelId}`)
+      .setLabel('Cancel Duel')
+      .setStyle(ButtonStyle.Danger)
+      .setDisabled(disabled)
+  );
+}
+
+function buildDuelReviewButtons(duelId, challengerId, opponentId, disabled = false) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`duelwin_${duelId}_${challengerId}`)
+      .setLabel('Challenger Wins')
+      .setStyle(ButtonStyle.Success)
+      .setDisabled(disabled),
+    new ButtonBuilder()
+      .setCustomId(`duelwin_${duelId}_${opponentId}`)
+      .setLabel('Opponent Wins')
+      .setStyle(ButtonStyle.Primary)
+      .setDisabled(disabled),
+    new ButtonBuilder()
+      .setCustomId(`duelreviewcancel_${duelId}`)
+      .setLabel('Cancel Duel')
+      .setStyle(ButtonStyle.Danger)
+      .setDisabled(disabled)
+  );
+}
+
 function formatCooldown(ms) {
   const totalSeconds = Math.ceil(ms / 1000);
   const hours = Math.floor(totalSeconds / 3600);
@@ -533,6 +656,17 @@ function formatCooldown(ms) {
   }
 
   return `${minutes}m`;
+}
+
+function getDuelById(duelId) {
+  return data.duels[duelId] || null;
+}
+
+function clearUserActiveDuel(userId, duelId) {
+  const user = ensureUser(userId);
+  if (user.activeDuelId === duelId) {
+    user.activeDuelId = null;
+  }
 }
 
 async function getMessageFromStoredLocation(channelId, messageId) {
@@ -579,6 +713,39 @@ async function updateOriginalChallengeMessage(user, challengeObj, options = {}) 
     return true;
   } catch (err) {
     console.error('Failed to update original challenge message:', err);
+    return false;
+  }
+}
+
+async function updateOriginalDuelMessage(duel, options = {}) {
+  if (!duel?.sourceChannelId || !duel?.sourceMessageId) return false;
+
+  try {
+    const message = await getMessageFromStoredLocation(
+      duel.sourceChannelId,
+      duel.sourceMessageId
+    );
+
+    if (!message) {
+      console.error('Original duel message not found.');
+      return false;
+    }
+
+    await message.edit({
+      content: options.content ?? '',
+      embeds: [buildDuelEmbed(duel)],
+      components: options.components ?? [
+        buildDuelButtons(
+          duel.id,
+          duel.status === 'pending',
+          duel.status === 'completed' || duel.status === 'cancelled'
+        )
+      ]
+    });
+
+    return true;
+  } catch (err) {
+    console.error('Failed to update original duel message:', err);
     return false;
   }
 }
@@ -674,6 +841,27 @@ const commands = [
       option
         .setName('difficulty')
         .setDescription('Choose challenge difficulty')
+        .setRequired(true)
+        .addChoices(
+          { name: 'Easy', value: 'easy' },
+          { name: 'Medium', value: 'medium' },
+          { name: 'Hard', value: 'hard' }
+        )
+    ),
+
+  new SlashCommandBuilder()
+    .setName('duelchallenge')
+    .setDescription('Challenge another player to a Fortnite duel')
+    .addUserOption(option =>
+      option
+        .setName('user')
+        .setDescription('Who you want to duel')
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option
+        .setName('difficulty')
+        .setDescription('Choose duel difficulty')
         .setRequired(true)
         .addChoices(
           { name: 'Easy', value: 'easy' },
@@ -957,6 +1145,7 @@ client.on(Events.InteractionCreate, async interaction => {
               value: [
                 '`/setepic` — set your own Epic username',
                 '`/challenge` — get a challenge',
+                '`/duelchallenge` — challenge another player',
                 '`/reroll` — reroll your active challenge once',
                 '`/daily` — claim daily bonus points',
                 '`/profile` — view stats',
@@ -1096,10 +1285,13 @@ client.on(Events.InteractionCreate, async interaction => {
             { name: 'Epic', value: targetData.epic || 'Not set', inline: true },
             { name: 'Points', value: `${targetData.points}`, inline: true },
             { name: 'Active Challenge', value: targetData.activeChallenge ? targetData.activeChallenge.text : 'None', inline: false },
+            { name: 'Active Duel', value: targetData.activeDuelId ? `Duel ID: ${targetData.activeDuelId}` : 'None', inline: false },
             { name: 'Approved Challenges', value: `${targetData.stats.approvedChallenges}`, inline: true },
             { name: 'Rejected Proofs', value: `${targetData.stats.rejectedProofs}`, inline: true },
             { name: 'Rerolls Used', value: `${targetData.stats.rerolls}`, inline: true },
             { name: 'Daily Claims', value: `${targetData.stats.dailyClaims}`, inline: true },
+            { name: 'Duel Wins', value: `${targetData.stats.duelWins}`, inline: true },
+            { name: 'Duel Losses', value: `${targetData.stats.duelLosses}`, inline: true },
             {
               name: 'Completed by Difficulty',
               value: `Easy: ${targetData.completedChallenges.easy.length}\nMedium: ${targetData.completedChallenges.medium.length}\nHard: ${targetData.completedChallenges.hard.length}`,
@@ -1454,6 +1646,109 @@ client.on(Events.InteractionCreate, async interaction => {
         return;
       }
 
+      if (interaction.commandName === 'duelchallenge') {
+        const opponent = interaction.options.getUser('user');
+        const difficulty = interaction.options.getString('difficulty');
+
+        if (opponent.id === interaction.user.id) {
+          await interaction.reply({
+            content: '❌ You cannot duel yourself.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (opponent.bot) {
+          await interaction.reply({
+            content: '❌ You cannot duel a bot.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        const opponentData = ensureUser(opponent.id);
+
+        if (!userData.epic) {
+          await interaction.reply({
+            content: '❌ You must set your Epic first using `/setepic`.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (!opponentData.epic) {
+          await interaction.reply({
+            content: `❌ **${opponent.tag}** must set their Epic username first before they can duel.`,
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (userData.activeDuelId) {
+          await interaction.reply({
+            content: '❌ You already have an active duel.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (opponentData.activeDuelId) {
+          await interaction.reply({
+            content: `❌ **${opponent.tag}** already has an active duel.`,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const chosenDuel = pickDuelChallenge(difficulty);
+
+        if (!chosenDuel) {
+          await interaction.reply({
+            content: '❌ No duel challenge is available for that difficulty.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        const duelId = makeId();
+        const duel = {
+          id: duelId,
+          challengerId: interaction.user.id,
+          opponentId: opponent.id,
+          difficulty,
+          challengeText: chosenDuel,
+          points: DUEL_POINTS[difficulty],
+          status: 'active',
+          submittedBy: null,
+          proofLink: null,
+          proofNote: null,
+          createdAt: Date.now(),
+          sourceChannelId: null,
+          sourceMessageId: null
+        };
+
+        data.duels[duelId] = duel;
+        userData.activeDuelId = duelId;
+        opponentData.activeDuelId = duelId;
+        saveData();
+
+        await interaction.reply({
+          content: `⚔️ <@${interaction.user.id}> has challenged <@${opponent.id}> to a duel!`,
+          embeds: [buildDuelEmbed(duel)],
+          components: [buildDuelButtons(duelId)]
+        });
+
+        const replyMessage = await interaction.fetchReply().catch(() => null);
+
+        if (replyMessage && data.duels[duelId]) {
+          data.duels[duelId].sourceChannelId = replyMessage.channelId;
+          data.duels[duelId].sourceMessageId = replyMessage.id;
+          saveData();
+        }
+
+        return;
+      }
+
       if (interaction.commandName === 'reroll') {
         if (!userData.epic) {
           await interaction.reply({
@@ -1686,6 +1981,102 @@ client.on(Events.InteractionCreate, async interaction => {
         return;
       }
 
+      if (action === 'duelsubmit') {
+        const duelId = parts[0];
+        const duel = getDuelById(duelId);
+
+        if (!duel) {
+          await interaction.reply({
+            content: '❌ That duel no longer exists.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (duel.status !== 'active') {
+          await interaction.reply({
+            content: '❌ This duel is not accepting proof right now.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (![duel.challengerId, duel.opponentId].includes(interaction.user.id)) {
+          await interaction.reply({
+            content: '❌ Only duel participants can submit proof.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        const modal = new ModalBuilder()
+          .setCustomId(`duelproofmodal_${duelId}`)
+          .setTitle('Submit Duel Proof');
+
+        const proofLinkInput = new TextInputBuilder()
+          .setCustomId('proof_link')
+          .setLabel('Clip or screenshot link')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setPlaceholder('Paste a Discord, Medal, YouTube, TikTok, or Streamable link');
+
+        const proofNoteInput = new TextInputBuilder()
+          .setCustomId('proof_note')
+          .setLabel('Short note')
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setPlaceholder('Example: 6 kills, placed 4th, beat the other player');
+
+        const row1 = new ActionRowBuilder().addComponents(proofLinkInput);
+        const row2 = new ActionRowBuilder().addComponents(proofNoteInput);
+
+        modal.addComponents(row1, row2);
+
+        await interaction.showModal(modal);
+        return;
+      }
+
+      if (action === 'duelcancel') {
+        const duelId = parts[0];
+        const duel = getDuelById(duelId);
+
+        if (!duel) {
+          await interaction.reply({
+            content: '❌ That duel no longer exists.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (interaction.user.id !== duel.challengerId && interaction.user.id !== duel.opponentId && !isStaff(interaction.member)) {
+          await interaction.reply({
+            content: '❌ Only duel participants or staff can cancel this duel.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        duel.status = 'cancelled';
+        saveData();
+
+        await updateOriginalDuelMessage(duel, {
+          content: '❌ Duel cancelled.',
+          components: [buildDuelButtons(duel.id, false, true)]
+        });
+
+        clearUserActiveDuel(duel.challengerId, duel.id);
+        clearUserActiveDuel(duel.opponentId, duel.id);
+        saveData();
+
+        await interaction.update({
+          content: '❌ Duel cancelled.',
+          embeds: [],
+          components: []
+        });
+
+        return;
+      }
+
       if (action === 'lfgjoin') {
         const hostId = parts[0];
 
@@ -1878,102 +2269,389 @@ client.on(Events.InteractionCreate, async interaction => {
           return;
         }
       }
+
+      if (action === 'duelwin') {
+        const modMember = interaction.member;
+
+        if (!isStaff(modMember)) {
+          await interaction.reply({
+            content: '❌ You need Manage Server or Administrator to do that.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        const duelId = parts[0];
+        const winnerId = parts[1];
+        const duel = getDuelById(duelId);
+
+        if (!duel) {
+          await interaction.reply({
+            content: '❌ That duel no longer exists.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (!['active', 'pending'].includes(duel.status)) {
+          await interaction.reply({
+            content: '❌ That duel has already been resolved.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (![duel.challengerId, duel.opponentId].includes(winnerId)) {
+          await interaction.reply({
+            content: '❌ Invalid duel winner.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        const loserId = winnerId === duel.challengerId ? duel.opponentId : duel.challengerId;
+        const winnerData = ensureUser(winnerId);
+        const loserData = ensureUser(loserId);
+
+        winnerData.points += duel.points;
+        winnerData.stats.duelWins += 1;
+        loserData.stats.duelLosses += 1;
+
+        duel.status = 'completed';
+        duel.winnerId = winnerId;
+        duel.completedAt = Date.now();
+        saveData();
+
+        await updateOriginalDuelMessage(duel, {
+          content: `🏆 <@${winnerId}> won this duel and earned **${duel.points}** points!`,
+          components: [buildDuelButtons(duel.id, true, true)]
+        });
+
+        clearUserActiveDuel(duel.challengerId, duel.id);
+        clearUserActiveDuel(duel.opponentId, duel.id);
+        saveData();
+
+        const winnerUser = await client.users.fetch(winnerId).catch(() => null);
+        const loserUser = await client.users.fetch(loserId).catch(() => null);
+
+        const resultEmbed = new EmbedBuilder()
+          .setTitle('🏆 Duel Result')
+          .setColor('Green')
+          .setDescription(`<@${winnerId}> won the duel and earned **${duel.points}** points.`)
+          .addFields(
+            { name: 'Challenge', value: duel.challengeText, inline: false },
+            { name: 'Winner', value: `<@${winnerId}>`, inline: true },
+            { name: 'Loser', value: `<@${loserId}>`, inline: true },
+            { name: 'Difficulty', value: duel.difficulty.toUpperCase(), inline: true }
+          )
+          .setFooter({ text: `Reviewed by ${interaction.user.tag}` });
+
+        await interaction.update({
+          embeds: [resultEmbed],
+          components: [buildDuelReviewButtons(duel.id, duel.challengerId, duel.opponentId, true)]
+        });
+
+        if (winnerUser) {
+          const dmEmbed = new EmbedBuilder()
+            .setTitle('🏆 You won your duel')
+            .setColor('Green')
+            .setDescription(`You won your duel in **Crash & Play Lounge** and earned **${duel.points}** points.`)
+            .addFields(
+              { name: 'Challenge', value: duel.challengeText, inline: false },
+              { name: 'Points Earned', value: `${duel.points}`, inline: true },
+              { name: 'Total Points', value: `${winnerData.points}`, inline: true }
+            )
+            .setFooter({ text: `Approved by ${interaction.user.tag}` })
+            .setTimestamp();
+
+          await winnerUser.send({ embeds: [dmEmbed] }).catch(() => null);
+        }
+
+        if (loserUser) {
+          const dmEmbed = new EmbedBuilder()
+            .setTitle('⚔️ Duel finished')
+            .setColor('Red')
+            .setDescription(`Your duel in **Crash & Play Lounge** has been reviewed.`)
+            .addFields(
+              { name: 'Challenge', value: duel.challengeText, inline: false },
+              { name: 'Winner', value: winnerUser ? winnerUser.tag : winnerId, inline: true },
+              { name: 'Reviewed by', value: interaction.user.tag, inline: true }
+            )
+            .setTimestamp();
+
+          await loserUser.send({ embeds: [dmEmbed] }).catch(() => null);
+        }
+
+        return;
+      }
+
+      if (action === 'duelreviewcancel') {
+        const modMember = interaction.member;
+
+        if (!isStaff(modMember)) {
+          await interaction.reply({
+            content: '❌ You need Manage Server or Administrator to do that.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        const duelId = parts[0];
+        const duel = getDuelById(duelId);
+
+        if (!duel) {
+          await interaction.reply({
+            content: '❌ That duel no longer exists.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        duel.status = 'cancelled';
+        saveData();
+
+        await updateOriginalDuelMessage(duel, {
+          content: '❌ Duel cancelled by staff.',
+          components: [buildDuelButtons(duel.id, false, true)]
+        });
+
+        clearUserActiveDuel(duel.challengerId, duel.id);
+        clearUserActiveDuel(duel.opponentId, duel.id);
+        saveData();
+
+        const cancelledEmbed = new EmbedBuilder()
+          .setTitle('❌ Duel Cancelled')
+          .setColor('Red')
+          .setDescription('This duel was cancelled by staff.')
+          .addFields(
+            { name: 'Challenge', value: duel.challengeText, inline: false },
+            { name: 'Challenger', value: `<@${duel.challengerId}>`, inline: true },
+            { name: 'Opponent', value: `<@${duel.opponentId}>`, inline: true }
+          )
+          .setFooter({ text: `Cancelled by ${interaction.user.tag}` });
+
+        await interaction.update({
+          embeds: [cancelledEmbed],
+          components: [buildDuelReviewButtons(duel.id, duel.challengerId, duel.opponentId, true)]
+        });
+
+        return;
+      }
     }
 
     if (interaction.isModalSubmit()) {
-      const [modalType, challengeId] = interaction.customId.split('_');
+      const [modalType, id] = interaction.customId.split('_');
 
-      if (modalType !== 'proofmodal') return;
+      if (modalType === 'proofmodal') {
+        await interaction.deferReply({ ephemeral: true });
 
-      await interaction.deferReply({ ephemeral: true });
+        const challengeId = id;
+        const userId = interaction.user.id;
+        const userData = ensureUser(userId);
 
-      const userId = interaction.user.id;
-      const userData = ensureUser(userId);
+        if (!userData.activeChallenge || userData.activeChallenge.id !== challengeId) {
+          await interaction.editReply({
+            content: '❌ That challenge is no longer active.'
+          });
+          return;
+        }
 
-      if (!userData.activeChallenge || userData.activeChallenge.id !== challengeId) {
-        await interaction.editReply({
-          content: '❌ That challenge is no longer active.'
+        const proofLink = interaction.fields.getTextInputValue('proof_link');
+        const proofNote = interaction.fields.getTextInputValue('proof_note');
+
+        userData.activeChallenge.status = 'pending';
+        userData.activeChallenge.proofLink = proofLink;
+        userData.activeChallenge.proofNote = proofNote;
+        saveData();
+
+        await updateOriginalChallengeMessage(userData, userData.activeChallenge, {
+          content: '⏳ Proof submitted. Waiting for staff review.',
+          components: [buildChallengeButtons(userData.activeChallenge.id, true, false)]
         });
+
+        let reviewChannel = null;
+
+        try {
+          reviewChannel = await client.channels.fetch(REVIEW_CHANNEL_ID);
+        } catch (err) {
+          console.error('Could not fetch review channel:', err);
+        }
+
+        if (!reviewChannel) {
+          await interaction.editReply({
+            content: '❌ Could not find the review channel. Check the channel ID and bot permissions.'
+          });
+          return;
+        }
+
+        if (
+          reviewChannel.type !== ChannelType.GuildText &&
+          reviewChannel.type !== ChannelType.PublicThread &&
+          reviewChannel.type !== ChannelType.PrivateThread &&
+          reviewChannel.type !== ChannelType.AnnouncementThread
+        ) {
+          await interaction.editReply({
+            content: '❌ The review channel is not a normal text channel.'
+          });
+          return;
+        }
+
+        const botMember = await interaction.guild.members.fetchMe();
+        const perms = reviewChannel.permissionsFor(botMember);
+
+        if (
+          !perms ||
+          !perms.has(PermissionsBitField.Flags.ViewChannel) ||
+          !perms.has(PermissionsBitField.Flags.SendMessages) ||
+          !perms.has(PermissionsBitField.Flags.EmbedLinks)
+        ) {
+          await interaction.editReply({
+            content: '❌ I do not have permission to send messages in the review channel.'
+          });
+          return;
+        }
+
+        const reviewEmbed = new EmbedBuilder()
+          .setTitle('📹 Challenge Proof Submitted')
+          .setColor('Orange')
+          .setDescription(`<@${userId}> submitted proof for review.`)
+          .addFields(
+            { name: 'Epic', value: userData.epic || 'Not set', inline: true },
+            { name: 'Discord', value: interaction.user.tag, inline: true },
+            { name: 'Difficulty', value: userData.activeChallenge.difficulty.toUpperCase(), inline: true },
+            { name: 'Challenge', value: userData.activeChallenge.text, inline: false },
+            { name: 'Proof Link', value: proofLink, inline: false },
+            { name: 'Player Note', value: proofNote, inline: false }
+          )
+          .setTimestamp();
+
+        await reviewChannel.send({
+          embeds: [reviewEmbed],
+          components: [buildReviewButtons(userId, challengeId)]
+        });
+
+        await interaction.editReply({
+          content: '✅ Proof submitted successfully! Waiting for mod approval.'
+        });
+
         return;
       }
 
-      const proofLink = interaction.fields.getTextInputValue('proof_link');
-      const proofNote = interaction.fields.getTextInputValue('proof_note');
+      if (modalType === 'duelproofmodal') {
+        await interaction.deferReply({ ephemeral: true });
 
-      userData.activeChallenge.status = 'pending';
-      userData.activeChallenge.proofLink = proofLink;
-      userData.activeChallenge.proofNote = proofNote;
-      saveData();
+        const duelId = id;
+        const duel = getDuelById(duelId);
 
-      await updateOriginalChallengeMessage(userData, userData.activeChallenge, {
-        content: '⏳ Proof submitted. Waiting for staff review.',
-        components: [buildChallengeButtons(userData.activeChallenge.id, true, false)]
-      });
+        if (!duel) {
+          await interaction.editReply({
+            content: '❌ That duel no longer exists.'
+          });
+          return;
+        }
 
-      let reviewChannel = null;
+        if (!['active', 'pending'].includes(duel.status)) {
+          await interaction.editReply({
+            content: '❌ That duel is no longer active.'
+          });
+          return;
+        }
 
-      try {
-        reviewChannel = await client.channels.fetch(REVIEW_CHANNEL_ID);
-      } catch (err) {
-        console.error('Could not fetch review channel:', err);
-      }
+        if (![duel.challengerId, duel.opponentId].includes(interaction.user.id)) {
+          await interaction.editReply({
+            content: '❌ Only duel participants can submit proof.'
+          });
+          return;
+        }
 
-      if (!reviewChannel) {
-        await interaction.editReply({
-          content: '❌ Could not find the review channel. Check the channel ID and bot permissions.'
+        const proofLink = interaction.fields.getTextInputValue('proof_link');
+        const proofNote = interaction.fields.getTextInputValue('proof_note');
+
+        duel.status = 'pending';
+        duel.submittedBy = interaction.user.id;
+        duel.proofLink = proofLink;
+        duel.proofNote = proofNote;
+        saveData();
+
+        await updateOriginalDuelMessage(duel, {
+          content: '⏳ Duel proof submitted. Waiting for staff review.',
+          components: [buildDuelButtons(duel.id, true, false)]
         });
+
+        let reviewChannel = null;
+
+        try {
+          reviewChannel = await client.channels.fetch(REVIEW_CHANNEL_ID);
+        } catch (err) {
+          console.error('Could not fetch review channel:', err);
+        }
+
+        if (!reviewChannel) {
+          await interaction.editReply({
+            content: '❌ Could not find the review channel. Check the channel ID and bot permissions.'
+          });
+          return;
+        }
+
+        if (
+          reviewChannel.type !== ChannelType.GuildText &&
+          reviewChannel.type !== ChannelType.PublicThread &&
+          reviewChannel.type !== ChannelType.PrivateThread &&
+          reviewChannel.type !== ChannelType.AnnouncementThread
+        ) {
+          await interaction.editReply({
+            content: '❌ The review channel is not a normal text channel.'
+          });
+          return;
+        }
+
+        const botMember = await interaction.guild.members.fetchMe();
+        const perms = reviewChannel.permissionsFor(botMember);
+
+        if (
+          !perms ||
+          !perms.has(PermissionsBitField.Flags.ViewChannel) ||
+          !perms.has(PermissionsBitField.Flags.SendMessages) ||
+          !perms.has(PermissionsBitField.Flags.EmbedLinks)
+        ) {
+          await interaction.editReply({
+            content: '❌ I do not have permission to send messages in the review channel.'
+          });
+          return;
+        }
+
+        const challengerData = ensureUser(duel.challengerId);
+        const opponentData = ensureUser(duel.opponentId);
+
+        const reviewEmbed = new EmbedBuilder()
+          .setTitle('⚔️ Duel Proof Submitted')
+          .setColor('Orange')
+          .setDescription(`<@${interaction.user.id}> submitted duel proof for review.`)
+          .addFields(
+            { name: 'Challenger', value: `<@${duel.challengerId}>`, inline: true },
+            { name: 'Opponent', value: `<@${duel.opponentId}>`, inline: true },
+            { name: 'Difficulty', value: duel.difficulty.toUpperCase(), inline: true },
+            { name: 'Challenger Epic', value: challengerData.epic || 'Not set', inline: true },
+            { name: 'Opponent Epic', value: opponentData.epic || 'Not set', inline: true },
+            { name: 'Reward', value: `${duel.points} points`, inline: true },
+            { name: 'Challenge', value: duel.challengeText, inline: false },
+            { name: 'Submitted By', value: interaction.user.tag, inline: true },
+            { name: 'Proof Link', value: proofLink, inline: false },
+            { name: 'Player Note', value: proofNote, inline: false }
+          )
+          .setTimestamp();
+
+        await reviewChannel.send({
+          embeds: [reviewEmbed],
+          components: [buildDuelReviewButtons(duel.id, duel.challengerId, duel.opponentId)]
+        });
+
+        await interaction.editReply({
+          content: '✅ Duel proof submitted successfully! Waiting for mod review.'
+        });
+
         return;
       }
-
-      if (
-        reviewChannel.type !== ChannelType.GuildText &&
-        reviewChannel.type !== ChannelType.PublicThread &&
-        reviewChannel.type !== ChannelType.PrivateThread &&
-        reviewChannel.type !== ChannelType.AnnouncementThread
-      ) {
-        await interaction.editReply({
-          content: '❌ The review channel is not a normal text channel.'
-        });
-        return;
-      }
-
-      const botMember = await interaction.guild.members.fetchMe();
-      const perms = reviewChannel.permissionsFor(botMember);
-
-      if (
-        !perms ||
-        !perms.has(PermissionsBitField.Flags.ViewChannel) ||
-        !perms.has(PermissionsBitField.Flags.SendMessages) ||
-        !perms.has(PermissionsBitField.Flags.EmbedLinks)
-      ) {
-        await interaction.editReply({
-          content: '❌ I do not have permission to send messages in the review channel.'
-        });
-        return;
-      }
-
-      const reviewEmbed = new EmbedBuilder()
-        .setTitle('📹 Challenge Proof Submitted')
-        .setColor('Orange')
-        .setDescription(`<@${userId}> submitted proof for review.`)
-        .addFields(
-          { name: 'Epic', value: userData.epic || 'Not set', inline: true },
-          { name: 'Discord', value: interaction.user.tag, inline: true },
-          { name: 'Difficulty', value: userData.activeChallenge.difficulty.toUpperCase(), inline: true },
-          { name: 'Challenge', value: userData.activeChallenge.text, inline: false },
-          { name: 'Proof Link', value: proofLink, inline: false },
-          { name: 'Player Note', value: proofNote, inline: false }
-        )
-        .setTimestamp();
-
-      await reviewChannel.send({
-        embeds: [reviewEmbed],
-        components: [buildReviewButtons(userId, challengeId)]
-      });
-
-      await interaction.editReply({
-        content: '✅ Proof submitted successfully! Waiting for mod approval.'
-      });
     }
   } catch (err) {
     console.error('Interaction error:', err);
