@@ -478,6 +478,131 @@ const duelChallenges = {
   ]
 };
 
+const mysteryBoxRewards = [
+  {
+    id: 'points_20',
+    weight: 28,
+    label: '20 Bonus Points',
+    apply(userData) {
+      userData.points += 20;
+      return {
+        label: '20 Bonus Points',
+        publicText: 'You received **20 bonus points**.',
+        staffText: 'Automatically added 20 points.',
+        rewardType: 'points',
+        amount: 20
+      };
+    }
+  },
+  {
+    id: 'points_35',
+    weight: 18,
+    label: '35 Bonus Points',
+    apply(userData) {
+      userData.points += 35;
+      return {
+        label: '35 Bonus Points',
+        publicText: 'You received **35 bonus points**.',
+        staffText: 'Automatically added 35 points.',
+        rewardType: 'points',
+        amount: 35
+      };
+    }
+  },
+  {
+    id: 'points_60',
+    weight: 7,
+    label: '60 Bonus Points',
+    apply(userData) {
+      userData.points += 60;
+      return {
+        label: '60 Bonus Points',
+        publicText: 'You received **60 bonus points**.',
+        staffText: 'Automatically added 60 points.',
+        rewardType: 'points',
+        amount: 60
+      };
+    }
+  },
+  {
+    id: 'giveaway_1',
+    weight: 18,
+    label: '1 Bonus Giveaway Entry',
+    apply(userData) {
+      userData.giveawayEntries += 1;
+      return {
+        label: '1 Bonus Giveaway Entry',
+        publicText: 'You received **1 bonus giveaway entry**.',
+        staffText: 'Automatically stored 1 bonus giveaway entry.',
+        rewardType: 'giveawayEntries',
+        amount: 1
+      };
+    }
+  },
+  {
+    id: 'giveaway_2',
+    weight: 8,
+    label: '2 Bonus Giveaway Entries',
+    apply(userData) {
+      userData.giveawayEntries += 2;
+      return {
+        label: '2 Bonus Giveaway Entries',
+        publicText: 'You received **2 bonus giveaway entries**.',
+        staffText: 'Automatically stored 2 bonus giveaway entries.',
+        rewardType: 'giveawayEntries',
+        amount: 2
+      };
+    }
+  },
+  {
+    id: 'reroll_1',
+    weight: 15,
+    label: '1 Lucky Reroll Ticket',
+    apply(userData) {
+      userData.luckyRerollTickets += 1;
+      return {
+        label: '1 Lucky Reroll Ticket',
+        publicText: 'You received **1 Lucky Reroll Ticket**.',
+        staffText: 'Automatically stored 1 Lucky Reroll Ticket.',
+        rewardType: 'luckyRerollTickets',
+        amount: 1
+      };
+    }
+  },
+  {
+    id: 'reroll_2',
+    weight: 4,
+    label: '2 Lucky Reroll Tickets',
+    apply(userData) {
+      userData.luckyRerollTickets += 2;
+      return {
+        label: '2 Lucky Reroll Tickets',
+        publicText: 'You received **2 Lucky Reroll Tickets**.',
+        staffText: 'Automatically stored 2 Lucky Reroll Tickets.',
+        rewardType: 'luckyRerollTickets',
+        amount: 2
+      };
+    }
+  },
+  {
+    id: 'jackpot_bundle',
+    weight: 2,
+    label: 'Jackpot Bundle',
+    apply(userData) {
+      userData.points += 40;
+      userData.giveawayEntries += 1;
+      userData.luckyRerollTickets += 1;
+      return {
+        label: 'Jackpot Bundle',
+        publicText: 'You hit the **Jackpot Bundle**: **40 points**, **1 bonus giveaway entry**, and **1 Lucky Reroll Ticket**.',
+        staffText: 'Automatically granted jackpot bundle: 40 points, 1 giveaway entry, 1 Lucky Reroll Ticket.',
+        rewardType: 'bundle',
+        amount: null
+      };
+    }
+  }
+];
+
 const shopItems = [
   {
     id: 'giveaway',
@@ -503,8 +628,8 @@ const shopItems = [
     emoji: '🎁',
     cost: 60,
     category: 'Random Reward',
-    description: 'Get a random surprise reward chosen by staff.',
-    delivery: 'Staff picks and delivers a mystery reward.'
+    description: 'Open it instantly for an automatic random reward like bonus points, giveaway entries, Lucky Reroll Tickets, or a jackpot bundle.',
+    delivery: 'It opens automatically the moment you buy it. No staff action needed.'
   },
   {
     id: 'featuredclip',
@@ -530,6 +655,25 @@ function getShopItem(itemId) {
   return shopItems.find(item => item.id === itemId) || null;
 }
 
+function pickMysteryBoxReward() {
+  const totalWeight = mysteryBoxRewards.reduce((sum, reward) => sum + reward.weight, 0);
+  let roll = Math.random() * totalWeight;
+
+  for (const reward of mysteryBoxRewards) {
+    roll -= reward.weight;
+    if (roll <= 0) {
+      return reward;
+    }
+  }
+
+  return mysteryBoxRewards[mysteryBoxRewards.length - 1];
+}
+
+function applyMysteryBoxReward(userData) {
+  const reward = pickMysteryBoxReward();
+  return reward.apply(userData);
+}
+
 function buildShopEmbed(userData, userId = null) {
   const bonusInUse = userId ? getUserBonusEntriesInUse(userId) : 0;
 
@@ -552,7 +696,8 @@ function buildShopEmbed(userData, userId = null) {
   descriptionLines.push(
     '',
     'Spend your points on server rewards.',
-    'After you buy something, it is logged for staff in the purchases channel and fulfilled manually unless stated otherwise.'
+    'After you buy something, it is logged for staff in the purchases channel.',
+    'Automatic items are delivered instantly with no staff action needed.'
   );
 
   const embed = new EmbedBuilder()
@@ -2464,8 +2609,11 @@ client.on(Events.InteractionCreate, async interaction => {
           fulfilled: false,
           fulfilledAt: null,
           fulfilledBy: null,
-          staffNote: null
+          staffNote: null,
+          rewardSummary: null
         };
+
+        let mysteryRewardResult = null;
 
         if (item.id === 'giveaway') {
           userData.giveawayEntries += 1;
@@ -2473,6 +2621,7 @@ client.on(Events.InteractionCreate, async interaction => {
           purchaseRecord.fulfilledAt = Date.now();
           purchaseRecord.fulfilledBy = client.user?.id || 'system';
           purchaseRecord.staffNote = 'Automatically stored 1 bonus giveaway entry.';
+          purchaseRecord.rewardSummary = '1 bonus giveaway entry';
         }
 
         if (item.id === 'skippass') {
@@ -2481,6 +2630,16 @@ client.on(Events.InteractionCreate, async interaction => {
           purchaseRecord.fulfilledAt = Date.now();
           purchaseRecord.fulfilledBy = client.user?.id || 'system';
           purchaseRecord.staffNote = 'Automatically stored 1 Lucky Reroll Ticket.';
+          purchaseRecord.rewardSummary = '1 Lucky Reroll Ticket';
+        }
+
+        if (item.id === 'mystery') {
+          mysteryRewardResult = applyMysteryBoxReward(userData);
+          purchaseRecord.fulfilled = true;
+          purchaseRecord.fulfilledAt = Date.now();
+          purchaseRecord.fulfilledBy = client.user?.id || 'system';
+          purchaseRecord.staffNote = mysteryRewardResult.staffText;
+          purchaseRecord.rewardSummary = mysteryRewardResult.label;
         }
 
         userData.purchaseHistory.push(purchaseRecord);
@@ -2522,9 +2681,10 @@ client.on(Events.InteractionCreate, async interaction => {
               { name: 'Purchase ID', value: purchaseRecord.id, inline: true },
               {
                 name: 'Status',
-                value: item.id === 'giveaway' || item.id === 'skippass'
-                  ? 'Automatically fulfilled'
-                  : 'Pending staff fulfillment',
+                value:
+                  item.id === 'giveaway' || item.id === 'skippass' || item.id === 'mystery'
+                    ? 'Automatically fulfilled'
+                    : 'Pending staff fulfillment',
                 inline: true
               },
               { name: 'Reward Details', value: item.description, inline: false },
@@ -2535,11 +2695,18 @@ client.on(Events.InteractionCreate, async interaction => {
                     ? 'Bonus giveaway entry was stored automatically and will be auto-used when the buyer enters a giveaway.'
                     : item.id === 'skippass'
                     ? 'Lucky Reroll Ticket was stored automatically. The buyer can use /reroll to consume it after their free reroll is already used.'
+                    : item.id === 'mystery'
+                    ? `Mystery Box opened automatically.\nReward granted: **${mysteryRewardResult?.label || 'Unknown reward'}**`
                     : item.delivery,
                 inline: false
               }
             )
-            .setFooter({ text: 'Staff: handle the reward, then react with ✅ when done.' })
+            .setFooter({
+              text:
+                item.id === 'giveaway' || item.id === 'skippass' || item.id === 'mystery'
+                  ? 'Automatic reward applied successfully.'
+                  : 'Staff: handle the reward, then react with ✅ when done.'
+            })
             .setTimestamp();
 
           await purchasesChannel.send({ embeds: [purchaseEmbed] }).catch(err => {
@@ -2555,6 +2722,8 @@ client.on(Events.InteractionCreate, async interaction => {
               ? `✅ You bought **${item.name}** for **${item.cost}** points.\nYou now have **${userData.points}** points left.\nYour stored bonus giveaway entries are now **${userData.giveawayEntries}**.`
               : item.id === 'skippass'
               ? `✅ You bought **${item.name}** for **${item.cost}** points.\nYou now have **${userData.points}** points left.\nYour stored Lucky Reroll Tickets are now **${userData.luckyRerollTickets}**.\nUse **/reroll** when your free reroll is already used.`
+              : item.id === 'mystery'
+              ? `🎁 You bought **${item.name}** for **${item.cost}** points.\n${mysteryRewardResult?.publicText || 'Your reward was applied automatically.'}\nYou now have **${userData.points}** points left.\n**Bonus Giveaway Entries:** ${userData.giveawayEntries || 0}\n**Lucky Reroll Tickets:** ${userData.luckyRerollTickets || 0}`
               : `✅ You bought **${item.name}** for **${item.cost}** points.\nYou now have **${userData.points}** points left.\nYour purchase was logged for staff. Reward delivery: **${item.delivery}**`,
           ephemeral: true
         });
