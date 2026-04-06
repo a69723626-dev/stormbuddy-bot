@@ -1,7 +1,6 @@
 require('dotenv').config();
 
 const fs = require('fs');
-const path = require('path');
 const {
   Client,
   GatewayIntentBits,
@@ -37,12 +36,7 @@ const GUILD_ID = process.env.GUILD_ID;
 const REVIEW_CHANNEL_ID = '1490076952122622003';
 const PURCHASES_CHANNEL_ID = '1490394016258859691';
 
-const DATA_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || path.join(__dirname, 'data');
-const DATA_FILE = path.join(DATA_DIR, 'data.json');
-
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
+const DATA_FILE = './data.json';
 const DAILY_POINTS = 15;
 const DUEL_POINTS = {
   easy: 15,
@@ -404,32 +398,47 @@ const shopItems = [
   {
     id: 'giveaway',
     name: 'Giveaway Entry',
+    emoji: '🎟️',
     cost: 25,
-    description: 'Buy 1 extra giveaway entry.'
+    category: 'Giveaway',
+    description: 'Buy 1 extra giveaway entry for the next staff-run giveaway.',
+    delivery: 'Staff manually adds your extra entry.'
   },
   {
-    id: 'vip',
-    name: 'VIP LFG Ping',
-    cost: 40,
-    description: 'Get 1 priority LFG shoutout from staff.'
+    id: 'skippass',
+    name: 'Skip Challenge Pass',
+    emoji: '⏭️',
+    cost: 45,
+    category: 'Challenge Help',
+    description: 'Use this to have staff clear 1 stuck or unwanted active challenge for you.',
+    delivery: 'Staff uses your pass when you ask.'
   },
   {
     id: 'mystery',
     name: 'Mystery Box',
+    emoji: '🎁',
     cost: 60,
-    description: 'Random surprise reward from staff.'
-  },
-  {
-    id: 'customrole',
-    name: 'Custom Role Request',
-    cost: 100,
-    description: 'Request a custom server role from staff.'
+    category: 'Random Reward',
+    description: 'Get a random surprise reward chosen by staff.',
+    delivery: 'Staff picks and delivers a mystery reward.'
   },
   {
     id: 'featuredclip',
     name: 'Featured Clip Submission',
+    emoji: '📹',
     cost: 75,
-    description: 'Submit 1 clip for featured clip review.'
+    category: 'Community Feature',
+    description: 'Submit 1 clip for featured clip review.',
+    delivery: 'Staff reviews the purchased submission.'
+  },
+  {
+    id: 'customrole',
+    name: 'Custom Role Request',
+    emoji: '✨',
+    cost: 100,
+    category: 'Server Perk',
+    description: 'Request a custom server role from staff.',
+    delivery: 'Staff creates or reviews your role request.'
   }
 ];
 
@@ -439,50 +448,66 @@ function getShopItem(itemId) {
 
 function buildShopEmbed(userData) {
   const embed = new EmbedBuilder()
-    .setTitle('🛒 StormBuddy Shop')
+    .setTitle('🛒 StormBuddy Reward Shop')
     .setColor('Gold')
-    .setDescription(`You currently have **${userData.points}** points.\nSpend them on rewards below.`)
-    .setFooter({ text: 'Purchases are logged by StormBuddy.' });
-
-  for (const item of shopItems) {
-    embed.addFields({
-      name: `${item.name} — ${item.cost} pts`,
-      value: item.description,
-      inline: false
-    });
-  }
+    .setDescription(
+      [
+        `**Your balance:** ${userData.points} points`,
+        '',
+        'Spend your points on server rewards.',
+        'After you buy something, it is logged for staff in the purchases channel and fulfilled manually unless stated otherwise.'
+      ].join('\n')
+    )
+    .addFields(
+      ...shopItems.map(item => ({
+        name: `${item.emoji} ${item.name} — ${item.cost} pts`,
+        value: `**Category:** ${item.category}\n**Reward:** ${item.description}\n**How it works:** ${item.delivery}`,
+        inline: false
+      }))
+    )
+    .setFooter({ text: 'Buttons disable automatically if you do not have enough points.' });
 
   return embed;
 }
 
 function buildShopButtons(userData) {
-  return new ActionRowBuilder().addComponents(
+  const firstRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('buy_giveaway')
       .setLabel('Giveaway')
+      .setEmoji('🎟️')
       .setStyle(ButtonStyle.Primary)
       .setDisabled(userData.points < getShopItem('giveaway').cost),
     new ButtonBuilder()
-      .setCustomId('buy_vip')
-      .setLabel('VIP Ping')
-      .setStyle(ButtonStyle.Primary)
-      .setDisabled(userData.points < getShopItem('vip').cost),
+      .setCustomId('buy_skippass')
+      .setLabel('Skip Pass')
+      .setEmoji('⏭️')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(userData.points < getShopItem('skippass').cost),
     new ButtonBuilder()
       .setCustomId('buy_mystery')
       .setLabel('Mystery Box')
-      .setStyle(ButtonStyle.Secondary)
-      .setDisabled(userData.points < getShopItem('mystery').cost),
-    new ButtonBuilder()
-      .setCustomId('buy_customrole')
-      .setLabel('Custom Role')
+      .setEmoji('🎁')
       .setStyle(ButtonStyle.Success)
-      .setDisabled(userData.points < getShopItem('customrole').cost),
+      .setDisabled(userData.points < getShopItem('mystery').cost)
+  );
+
+  const secondRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('buy_featuredclip')
       .setLabel('Featured Clip')
+      .setEmoji('📹')
+      .setStyle(ButtonStyle.Primary)
+      .setDisabled(userData.points < getShopItem('featuredclip').cost),
+    new ButtonBuilder()
+      .setCustomId('buy_customrole')
+      .setLabel('Custom Role')
+      .setEmoji('✨')
       .setStyle(ButtonStyle.Success)
-      .setDisabled(userData.points < getShopItem('featuredclip').cost)
+      .setDisabled(userData.points < getShopItem('customrole').cost)
   );
+
+  return [firstRow, secondRow];
 }
 
 function makeId() {
@@ -1349,7 +1374,7 @@ client.on(Events.InteractionCreate, async interaction => {
       if (interaction.commandName === 'shop') {
         await interaction.reply({
           embeds: [buildShopEmbed(userData)],
-          components: [buildShopButtons(userData)],
+          components: buildShopButtons(userData),
           ephemeral: true
         });
         return;
@@ -1858,7 +1883,11 @@ client.on(Events.InteractionCreate, async interaction => {
           itemId: item.id,
           itemName: item.name,
           cost: item.cost,
-          purchasedAt: Date.now()
+          purchasedAt: Date.now(),
+          fulfilled: false,
+          fulfilledAt: null,
+          fulfilledBy: null,
+          staffNote: null
         };
 
         userData.purchaseHistory.push(purchaseRecord);
@@ -1866,7 +1895,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
         await interaction.update({
           embeds: [buildShopEmbed(userData)],
-          components: [buildShopButtons(userData)]
+          components: buildShopButtons(userData)
         });
 
         let purchasesChannel = null;
@@ -1887,17 +1916,21 @@ client.on(Events.InteractionCreate, async interaction => {
           const purchaseEmbed = new EmbedBuilder()
             .setTitle('🛒 New Shop Purchase')
             .setColor('Gold')
-            .setDescription(`<@${interaction.user.id}> bought an item from the StormBuddy shop.`)
+            .setDescription(`<@${interaction.user.id}> bought **${item.emoji} ${item.name}** from the StormBuddy shop.`)
             .addFields(
               { name: 'User', value: `${interaction.user.tag}`, inline: true },
               { name: 'Discord ID', value: `${interaction.user.id}`, inline: true },
               { name: 'Epic', value: userData.epic || 'Not set', inline: true },
-              { name: 'Item', value: item.name, inline: true },
+              { name: 'Category', value: item.category, inline: true },
+              { name: 'Item', value: `${item.emoji} ${item.name}`, inline: true },
               { name: 'Cost', value: `${item.cost} points`, inline: true },
               { name: 'Points Left', value: `${userData.points}`, inline: true },
-              { name: 'Description', value: item.description, inline: false }
+              { name: 'Purchase ID', value: purchaseRecord.id, inline: true },
+              { name: 'Status', value: 'Pending staff fulfillment', inline: true },
+              { name: 'Reward Details', value: item.description, inline: false },
+              { name: 'How To Fulfill', value: item.delivery, inline: false }
             )
-            .setFooter({ text: `Purchase ID: ${purchaseRecord.id}` })
+            .setFooter({ text: 'Staff: handle the reward, then react with ✅ when done.' })
             .setTimestamp();
 
           await purchasesChannel.send({ embeds: [purchaseEmbed] }).catch(err => {
@@ -1908,7 +1941,7 @@ client.on(Events.InteractionCreate, async interaction => {
         }
 
         await interaction.followUp({
-          content: `✅ You bought **${item.name}** for **${item.cost}** points.\nYou now have **${userData.points}** points left.`,
+          content: `✅ You bought **${item.name}** for **${item.cost}** points.\nYou now have **${userData.points}** points left.\nYour purchase was logged for staff. Reward delivery: **${item.delivery}**`,
           ephemeral: true
         });
 
