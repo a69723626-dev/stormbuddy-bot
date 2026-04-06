@@ -201,6 +201,78 @@ function isStaff(member) {
   );
 }
 
+function parseDurationString(input) {
+  if (!input || typeof input !== 'string') return null;
+
+  const normalized = input.toLowerCase().replace(/\s+/g, '');
+  const regex = /(\d+)([wdhms])/g;
+
+  let totalMs = 0;
+  let matchedText = '';
+  let match;
+
+  while ((match = regex.exec(normalized)) !== null) {
+    const amount = parseInt(match[1], 10);
+    const unit = match[2];
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return null;
+    }
+
+    matchedText += match[0];
+
+    if (unit === 'w') totalMs += amount * 7 * 24 * 60 * 60 * 1000;
+    if (unit === 'd') totalMs += amount * 24 * 60 * 60 * 1000;
+    if (unit === 'h') totalMs += amount * 60 * 60 * 1000;
+    if (unit === 'm') totalMs += amount * 60 * 1000;
+    if (unit === 's') totalMs += amount * 1000;
+  }
+
+  if (matchedText.length !== normalized.length || totalMs <= 0) {
+    return null;
+  }
+
+  return totalMs;
+}
+
+function formatDurationWords(ms) {
+  let remainingSeconds = Math.max(1, Math.floor(ms / 1000));
+  const parts = [];
+
+  const units = [
+    { label: 'w', seconds: 7 * 24 * 60 * 60 },
+    { label: 'd', seconds: 24 * 60 * 60 },
+    { label: 'h', seconds: 60 * 60 },
+    { label: 'm', seconds: 60 },
+    { label: 's', seconds: 1 }
+  ];
+
+  for (const unit of units) {
+    const value = Math.floor(remainingSeconds / unit.seconds);
+    if (value > 0) {
+      parts.push(`${value}${unit.label}`);
+      remainingSeconds -= value * unit.seconds;
+    }
+  }
+
+  return parts.join(' ');
+}
+
+function getUserBonusEntriesInUse(userId) {
+  let total = 0;
+
+  for (const giveaway of Object.values(data.giveaways || {})) {
+    if (giveaway.status !== 'active') continue;
+
+    const entry = giveaway.entries?.[userId];
+    if (!entry) continue;
+
+    total += Math.max(0, entry.bonusEntriesUsed || 0);
+  }
+
+  return total;
+}
+
 const challenges = {
   easy: [
     'Get 1 elimination',
@@ -408,17 +480,17 @@ const shopItems = [
     emoji: '🎟️',
     cost: 25,
     category: 'Giveaway',
-    description: 'Buy 1 extra giveaway entry for the next staff-run giveaway.',
-    delivery: 'Staff manually adds your extra entry.'
+    description: 'Buy 1 extra giveaway entry and keep it stored until you join an active giveaway.',
+    delivery: 'It is stored automatically and gets used the moment you enter a giveaway.'
   },
   {
     id: 'skippass',
-    name: 'Skip Challenge Pass',
-    emoji: '⏭️',
+    name: 'Lucky Reroll Ticket',
+    emoji: '🎲',
     cost: 45,
     category: 'Challenge Help',
-    description: 'Use this to have staff clear 1 stuck or unwanted active challenge for you.',
-    delivery: 'Staff uses your pass when you ask.'
+    description: 'Swap your current challenge for a surprise fresh one when you are stuck or bored.',
+    delivery: 'Staff uses your ticket when you ask for a bonus reroll.'
   },
   {
     id: 'mystery',
@@ -453,19 +525,31 @@ function getShopItem(itemId) {
   return shopItems.find(item => item.id === itemId) || null;
 }
 
-function buildShopEmbed(userData) {
+function buildShopEmbed(userData, userId = null) {
+  const bonusInUse = userId ? getUserBonusEntriesInUse(userId) : 0;
+
+  const descriptionLines = [
+    `**Your balance:** ${userData.points} points`
+  ];
+
+  if ((userData.giveawayEntries || 0) > 0) {
+    descriptionLines.push(`**Bonus giveaway entries:** ${userData.giveawayEntries || 0}`);
+  }
+
+  if (bonusInUse > 0) {
+    descriptionLines.push(`**Bonus entries being used:** ${bonusInUse}`);
+  }
+
+  descriptionLines.push(
+    '',
+    'Spend your points on server rewards.',
+    'After you buy something, it is logged for staff in the purchases channel and fulfilled manually unless stated otherwise.'
+  );
+
   const embed = new EmbedBuilder()
     .setTitle('🛒 StormBuddy Reward Shop')
     .setColor('Gold')
-    .setDescription(
-      [
-        `**Your balance:** ${userData.points} points`,
-        `**Bonus giveaway entries:** ${userData.giveawayEntries || 0}`,
-        '',
-        'Spend your points on server rewards.',
-        'After you buy something, it is logged for staff in the purchases channel and fulfilled manually unless stated otherwise.'
-      ].join('\n')
-    )
+    .setDescription(descriptionLines.join('\n'))
     .addFields(
       ...shopItems.map(item => ({
         name: `${item.emoji} ${item.name} — ${item.cost} pts`,
@@ -488,8 +572,8 @@ function buildShopButtons(userData) {
       .setDisabled(userData.points < getShopItem('giveaway').cost),
     new ButtonBuilder()
       .setCustomId('buy_skippass')
-      .setLabel('Skip Pass')
-      .setEmoji('⏭️')
+      .setLabel('Lucky Reroll')
+      .setEmoji('🎲')
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(userData.points < getShopItem('skippass').cost),
     new ButtonBuilder()
@@ -745,7 +829,7 @@ function buildGiveawayEmbed(giveaway) {
       },
       {
         name: 'How To Enter',
-        value: 'Press the button below to enter.\nIf you bought extra giveaway entries in the shop, they are added automatically when this giveaway ends.',
+        value: 'Press the button below to enter.\nIf you have stored bonus giveaway entries, they are automatically applied the moment you join.',
         inline: false
       },
       {
@@ -938,8 +1022,13 @@ async function endGiveaway(giveawayId, endedBy = 'StormBuddy') {
 
   for (const userId of entrantIds) {
     const userData = ensureUser(userId);
-    const extraEntries = Math.max(0, userData.giveawayEntries || 0);
-    weightMap[userId] = 1 + extraEntries;
+    const entryData = giveaway.entries[userId] || {};
+    const bonusEntriesUsed =
+      typeof entryData.bonusEntriesUsed === 'number'
+        ? Math.max(0, entryData.bonusEntriesUsed)
+        : Math.max(0, userData.giveawayEntries || 0);
+
+    weightMap[userId] = 1 + bonusEntriesUsed;
   }
 
   const winners = chooseWeightedWinners(
@@ -951,13 +1040,6 @@ async function endGiveaway(giveawayId, endedBy = 'StormBuddy') {
   giveaway.endedAt = Date.now();
   giveaway.endedBy = endedBy;
   giveaway.winnerIds = winners;
-
-  for (const userId of entrantIds) {
-    const userData = ensureUser(userId);
-    if (userData.giveawayEntries > 0) {
-      userData.giveawayEntries = 0;
-    }
-  }
 
   saveData();
 
@@ -1168,12 +1250,11 @@ const commands = [
             .setDescription('What the giveaway prize is')
             .setRequired(true)
         )
-        .addIntegerOption(option =>
+        .addStringOption(option =>
           option
-            .setName('duration_minutes')
-            .setDescription('How long the giveaway should last in minutes')
+            .setName('duration')
+            .setDescription('Examples: 30m, 2h, 1d12h, 1w, 1w2d3h4m5s')
             .setRequired(true)
-            .setMinValue(1)
         )
         .addIntegerOption(option =>
           option
@@ -1217,12 +1298,11 @@ const commands = [
             .setDescription('New prize text')
             .setRequired(false)
         )
-        .addIntegerOption(option =>
+        .addStringOption(option =>
           option
-            .setName('add_minutes')
-            .setDescription('Add more minutes to the timer')
+            .setName('add_time')
+            .setDescription('Extra time to add. Examples: 30m, 2h, 1d12h')
             .setRequired(false)
-            .setMinValue(1)
         )
         .addIntegerOption(option =>
           option
@@ -1610,28 +1690,42 @@ client.on(Events.InteractionCreate, async interaction => {
       if (interaction.commandName === 'profile') {
         const targetUser = interaction.options.getUser('user') || interaction.user;
         const targetData = ensureUser(targetUser.id);
+        const bonusEntriesStored = targetData.giveawayEntries || 0;
+        const bonusEntriesInUse = getUserBonusEntriesInUse(targetUser.id);
+
+        const fields = [
+          { name: 'Epic', value: targetData.epic || 'Not set', inline: true },
+          { name: 'Points', value: `${targetData.points}`, inline: true }
+        ];
+
+        if (bonusEntriesStored > 0) {
+          fields.push({ name: 'Bonus Giveaway Entries', value: `${bonusEntriesStored}`, inline: true });
+        }
+
+        if (bonusEntriesInUse > 0) {
+          fields.push({ name: 'Bonus Entries Being Used', value: `${bonusEntriesInUse}`, inline: true });
+        }
+
+        fields.push(
+          { name: 'Active Challenge', value: targetData.activeChallenge ? targetData.activeChallenge.text : 'None', inline: false },
+          { name: 'Active Duel', value: targetData.activeDuelId ? `Duel ID: ${targetData.activeDuelId}` : 'None', inline: false },
+          { name: 'Approved Challenges', value: `${targetData.stats.approvedChallenges}`, inline: true },
+          { name: 'Rejected Proofs', value: `${targetData.stats.rejectedProofs}`, inline: true },
+          { name: 'Rerolls Used', value: `${targetData.stats.rerolls}`, inline: true },
+          { name: 'Daily Claims', value: `${targetData.stats.dailyClaims}`, inline: true },
+          { name: 'Duel Wins', value: `${targetData.stats.duelWins}`, inline: true },
+          { name: 'Duel Losses', value: `${targetData.stats.duelLosses}`, inline: true },
+          {
+            name: 'Completed by Difficulty',
+            value: `Easy: ${targetData.completedChallenges.easy.length}\nMedium: ${targetData.completedChallenges.medium.length}\nHard: ${targetData.completedChallenges.hard.length}`,
+            inline: false
+          }
+        );
 
         const embed = new EmbedBuilder()
           .setTitle(`📊 ${targetUser.username}'s StormBuddy Profile`)
           .setColor('Aqua')
-          .addFields(
-            { name: 'Epic', value: targetData.epic || 'Not set', inline: true },
-            { name: 'Points', value: `${targetData.points}`, inline: true },
-            { name: 'Bonus Giveaway Entries', value: `${targetData.giveawayEntries || 0}`, inline: true },
-            { name: 'Active Challenge', value: targetData.activeChallenge ? targetData.activeChallenge.text : 'None', inline: false },
-            { name: 'Active Duel', value: targetData.activeDuelId ? `Duel ID: ${targetData.activeDuelId}` : 'None', inline: false },
-            { name: 'Approved Challenges', value: `${targetData.stats.approvedChallenges}`, inline: true },
-            { name: 'Rejected Proofs', value: `${targetData.stats.rejectedProofs}`, inline: true },
-            { name: 'Rerolls Used', value: `${targetData.stats.rerolls}`, inline: true },
-            { name: 'Daily Claims', value: `${targetData.stats.dailyClaims}`, inline: true },
-            { name: 'Duel Wins', value: `${targetData.stats.duelWins}`, inline: true },
-            { name: 'Duel Losses', value: `${targetData.stats.duelLosses}`, inline: true },
-            {
-              name: 'Completed by Difficulty',
-              value: `Easy: ${targetData.completedChallenges.easy.length}\nMedium: ${targetData.completedChallenges.medium.length}\nHard: ${targetData.completedChallenges.hard.length}`,
-              inline: false
-            }
-          )
+          .addFields(fields)
           .setTimestamp();
 
         await interaction.reply({ embeds: [embed] });
@@ -1676,7 +1770,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
       if (interaction.commandName === 'shop') {
         await interaction.reply({
-          embeds: [buildShopEmbed(userData)],
+          embeds: [buildShopEmbed(userData, userId)],
           components: buildShopButtons(userData),
           ephemeral: true
         });
@@ -1696,9 +1790,18 @@ client.on(Events.InteractionCreate, async interaction => {
 
         if (subcommand === 'create') {
           const prize = interaction.options.getString('prize');
-          const durationMinutes = interaction.options.getInteger('duration_minutes');
+          const durationInput = interaction.options.getString('duration');
+          const durationMs = parseDurationString(durationInput);
           const winners = interaction.options.getInteger('winners');
           const targetChannel = interaction.options.getChannel('channel') || interaction.channel;
+
+          if (!durationMs) {
+            await interaction.reply({
+              content: '❌ Invalid duration format. Use something like `30m`, `2h`, `1d12h`, or `1w2d3h4m5s`.',
+              ephemeral: true
+            });
+            return;
+          }
 
           if (!isSupportedTextChannel(targetChannel)) {
             await interaction.reply({
@@ -1717,7 +1820,7 @@ client.on(Events.InteractionCreate, async interaction => {
             hostTag: interaction.user.tag,
             status: 'active',
             createdAt: Date.now(),
-            endsAt: Date.now() + durationMinutes * 60 * 1000,
+            endsAt: Date.now() + durationMs,
             entries: {},
             winnerIds: [],
             channelId: null,
@@ -1737,7 +1840,7 @@ client.on(Events.InteractionCreate, async interaction => {
           saveData();
 
           await interaction.reply({
-            content: `✅ Giveaway created in ${targetChannel}.\n**ID:** \`${giveawayId}\``,
+            content: `✅ Giveaway created in ${targetChannel}.\n**ID:** \`${giveawayId}\`\n**Duration:** \`${formatDurationWords(durationMs)}\``,
             ephemeral: true
           });
           return;
@@ -1767,8 +1870,9 @@ client.on(Events.InteractionCreate, async interaction => {
         if (subcommand === 'edit') {
           const giveawayId = interaction.options.getString('giveaway_id');
           const prize = interaction.options.getString('prize');
-          const addMinutes = interaction.options.getInteger('add_minutes');
+          const addTimeInput = interaction.options.getString('add_time');
           const winners = interaction.options.getInteger('winners');
+          const addTimeMs = addTimeInput ? parseDurationString(addTimeInput) : null;
 
           const giveaway = getGiveawayById(giveawayId);
 
@@ -1788,7 +1892,15 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
           }
 
-          if (!prize && !addMinutes && !winners) {
+          if (addTimeInput && !addTimeMs) {
+            await interaction.reply({
+              content: '❌ Invalid add_time format. Use something like `30m`, `2h`, `1d12h`, or `1w2d3h4m5s`.',
+              ephemeral: true
+            });
+            return;
+          }
+
+          if (!prize && !addTimeInput && !winners) {
             await interaction.reply({
               content: '❌ You need to change at least one thing.',
               ephemeral: true
@@ -1800,8 +1912,8 @@ client.on(Events.InteractionCreate, async interaction => {
             giveaway.prize = prize;
           }
 
-          if (typeof addMinutes === 'number') {
-            giveaway.endsAt += addMinutes * 60 * 1000;
+          if (typeof addTimeMs === 'number') {
+            giveaway.endsAt += addTimeMs;
           }
 
           if (typeof winners === 'number') {
@@ -1813,7 +1925,7 @@ client.on(Events.InteractionCreate, async interaction => {
           await updateGiveawayMessage(giveaway);
 
           await interaction.reply({
-            content: `✅ Giveaway \`${giveaway.id}\` updated.`,
+            content: `✅ Giveaway \`${giveaway.id}\` updated.${addTimeMs ? ` Added \`${formatDurationWords(addTimeMs)}\`.` : ''}`,
             ephemeral: true
           });
           return;
@@ -2335,14 +2447,14 @@ client.on(Events.InteractionCreate, async interaction => {
           purchaseRecord.fulfilled = true;
           purchaseRecord.fulfilledAt = Date.now();
           purchaseRecord.fulfilledBy = client.user?.id || 'system';
-          purchaseRecord.staffNote = 'Automatically added 1 bonus giveaway entry.';
+          purchaseRecord.staffNote = 'Automatically stored 1 bonus giveaway entry.';
         }
 
         userData.purchaseHistory.push(purchaseRecord);
         saveData();
 
         await interaction.update({
-          embeds: [buildShopEmbed(userData)],
+          embeds: [buildShopEmbed(userData, userId)],
           components: buildShopButtons(userData)
         });
 
@@ -2386,7 +2498,7 @@ client.on(Events.InteractionCreate, async interaction => {
               {
                 name: 'How To Fulfill',
                 value: item.id === 'giveaway'
-                  ? 'Bonus giveaway entry was added automatically to the buyer account.'
+                  ? 'Bonus giveaway entry was stored automatically and will be auto-used when the buyer enters a giveaway.'
                   : item.delivery,
                 inline: false
               }
@@ -2403,7 +2515,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
         await interaction.followUp({
           content: item.id === 'giveaway'
-            ? `✅ You bought **${item.name}** for **${item.cost}** points.\nYou now have **${userData.points}** points left.\nYour bonus giveaway entries are now **${userData.giveawayEntries}**.`
+            ? `✅ You bought **${item.name}** for **${item.cost}** points.\nYou now have **${userData.points}** points left.\nYour stored bonus giveaway entries are now **${userData.giveawayEntries}**.`
             : `✅ You bought **${item.name}** for **${item.cost}** points.\nYou now have **${userData.points}** points left.\nYour purchase was logged for staff. Reward delivery: **${item.delivery}**`,
           ephemeral: true
         });
@@ -2434,22 +2546,40 @@ client.on(Events.InteractionCreate, async interaction => {
         const userData = ensureUser(interaction.user.id);
 
         if (giveaway.entries[interaction.user.id]) {
+          const existingEntry = giveaway.entries[interaction.user.id];
+          const bonusUsed = Math.max(0, existingEntry.bonusEntriesUsed || 0);
+          const totalEntries = Math.max(1, existingEntry.totalEntries || (1 + bonusUsed));
+
           await interaction.reply({
-            content: `ℹ️ You are already entered.\nYour total weight for this giveaway will be **${1 + (userData.giveawayEntries || 0)}** entry${1 + (userData.giveawayEntries || 0) === 1 ? '' : 'ies'}.`,
+            content: bonusUsed > 0
+              ? `ℹ️ You are already entered.\n**Bonus Giveaway Entries:** ${userData.giveawayEntries || 0}\n**Bonus Entries Being Used:** ${bonusUsed}\n**Total Entries In This Giveaway:** ${totalEntries}`
+              : `ℹ️ You are already entered.\nYour total weight for this giveaway is **${totalEntries}** entry${totalEntries === 1 ? '' : 'ies'}.`,
             ephemeral: true
           });
           return;
         }
 
+        const storedBonusEntries = Math.max(0, userData.giveawayEntries || 0);
+        const totalEntries = 1 + storedBonusEntries;
+
         giveaway.entries[interaction.user.id] = {
-          enteredAt: Date.now()
+          enteredAt: Date.now(),
+          bonusEntriesUsed: storedBonusEntries,
+          totalEntries
         };
+
+        if (storedBonusEntries > 0) {
+          userData.giveawayEntries = 0;
+        }
+
         saveData();
 
         await updateGiveawayMessage(giveaway);
 
         await interaction.reply({
-          content: `✅ You entered the giveaway for **${giveaway.prize}**.\nYour total weight for this giveaway will be **${1 + (userData.giveawayEntries || 0)}** entry${1 + (userData.giveawayEntries || 0) === 1 ? '' : 'ies'}.`,
+          content: storedBonusEntries > 0
+            ? `✅ You entered the giveaway for **${giveaway.prize}**.\n**Bonus Giveaway Entries:** ${userData.giveawayEntries || 0}\n**Bonus Entries Being Used:** ${storedBonusEntries}\n**Total Entries In This Giveaway:** ${totalEntries}`
+            : `✅ You entered the giveaway for **${giveaway.prize}**.\nYour total weight for this giveaway is **${totalEntries}** entry${totalEntries === 1 ? '' : 'ies'}.`,
           ephemeral: true
         });
         return;
@@ -2910,7 +3040,7 @@ client.on(Events.InteractionCreate, async interaction => {
             .setFooter({ text: `Approved by ${interaction.user.tag}` })
             .setTimestamp();
 
-            await winnerUser.send({ embeds: [dmEmbed] }).catch(() => null);
+          await winnerUser.send({ embeds: [dmEmbed] }).catch(() => null);
         }
 
         if (loserUser) {
