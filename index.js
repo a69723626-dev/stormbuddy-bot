@@ -88,6 +88,7 @@ function ensureUser(userId) {
       dailyClaimedAt: null,
       purchaseHistory: [],
       giveawayEntries: 0,
+      luckyRerollTickets: 0,
       completedChallenges: {
         easy: [],
         medium: [],
@@ -140,6 +141,10 @@ function ensureUser(userId) {
 
   if (typeof user.giveawayEntries !== 'number') {
     user.giveawayEntries = 0;
+  }
+
+  if (typeof user.luckyRerollTickets !== 'number') {
+    user.luckyRerollTickets = 0;
   }
 
   if (!user.stats) {
@@ -489,8 +494,8 @@ const shopItems = [
     emoji: '🎲',
     cost: 45,
     category: 'Challenge Help',
-    description: 'Swap your current challenge for a surprise fresh one when you are stuck or bored.',
-    delivery: 'Staff uses your ticket when you ask for a bonus reroll.'
+    description: 'Use 1 extra reroll after your normal challenge reroll has already been used.',
+    delivery: 'It is stored automatically and gets consumed the next time you use /reroll after your free reroll is gone.'
   },
   {
     id: 'mystery',
@@ -534,6 +539,10 @@ function buildShopEmbed(userData, userId = null) {
 
   if ((userData.giveawayEntries || 0) > 0) {
     descriptionLines.push(`**Bonus giveaway entries:** ${userData.giveawayEntries || 0}`);
+  }
+
+  if ((userData.luckyRerollTickets || 0) > 0) {
+    descriptionLines.push(`**Lucky reroll tickets:** ${userData.luckyRerollTickets || 0}`);
   }
 
   if (bonusInUse > 0) {
@@ -1203,7 +1212,7 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('reroll')
-    .setDescription('Reroll your current active challenge once'),
+    .setDescription('Reroll your current active challenge once, then use Lucky Reroll Tickets for extra rerolls'),
 
   new SlashCommandBuilder()
     .setName('daily')
@@ -1556,7 +1565,7 @@ client.on(Events.InteractionCreate, async interaction => {
                 '`/setepic` — set your own Epic username',
                 '`/challenge` — get a challenge',
                 '`/duelchallenge` — challenge another player',
-                '`/reroll` — reroll your active challenge once',
+                '`/reroll` — reroll your active challenge once or use Lucky Reroll Tickets',
                 '`/daily` — claim daily bonus points',
                 '`/profile` — view stats',
                 '`/leaderboard` — top players',
@@ -1700,6 +1709,10 @@ client.on(Events.InteractionCreate, async interaction => {
 
         if (bonusEntriesStored > 0) {
           fields.push({ name: 'Bonus Giveaway Entries', value: `${bonusEntriesStored}`, inline: true });
+        }
+
+        if ((targetData.luckyRerollTickets || 0) > 0) {
+          fields.push({ name: 'Lucky Reroll Tickets', value: `${targetData.luckyRerollTickets}`, inline: true });
         }
 
         if (bonusEntriesInUse > 0) {
@@ -2357,14 +2370,6 @@ client.on(Events.InteractionCreate, async interaction => {
           return;
         }
 
-        if (userData.activeChallenge.rerollUsed) {
-          await interaction.reply({
-            content: '❌ You already used your reroll on this challenge.',
-            ephemeral: true
-          });
-          return;
-        }
-
         const currentChallenge = userData.activeChallenge;
         const completedList = userData.completedChallenges[currentChallenge.difficulty] || [];
         const newChallengeText = pickChallenge(
@@ -2381,8 +2386,24 @@ client.on(Events.InteractionCreate, async interaction => {
           return;
         }
 
+        let usedTicket = false;
+
+        if (currentChallenge.rerollUsed) {
+          if ((userData.luckyRerollTickets || 0) < 1) {
+            await interaction.reply({
+              content: '❌ You already used your free reroll on this challenge and you do not have any **Lucky Reroll Tickets** left.\nBuy one in `/shop` to reroll again.',
+              ephemeral: true
+            });
+            return;
+          }
+
+          userData.luckyRerollTickets -= 1;
+          usedTicket = true;
+        } else {
+          currentChallenge.rerollUsed = true;
+        }
+
         currentChallenge.text = newChallengeText;
-        currentChallenge.rerollUsed = true;
         currentChallenge.createdAt = Date.now();
         currentChallenge.proofLink = null;
         currentChallenge.proofNote = null;
@@ -2390,11 +2411,15 @@ client.on(Events.InteractionCreate, async interaction => {
         saveData();
 
         await updateOriginalChallengeMessage(userData, currentChallenge, {
-          content: '🔄 Challenge rerolled!'
+          content: usedTicket
+            ? '🎲 Lucky Reroll Ticket used! Challenge rerolled!'
+            : '🔄 Challenge rerolled!'
         });
 
         await interaction.reply({
-          content: '🔄 Your challenge was rerolled!',
+          content: usedTicket
+            ? `🎲 You used **1 Lucky Reroll Ticket** and got a new challenge.\n**Tickets left:** ${userData.luckyRerollTickets}`
+            : '🔄 Your challenge was rerolled!',
           embeds: [buildChallengeEmbed(userData, currentChallenge)],
           ephemeral: true
         });
@@ -2450,6 +2475,14 @@ client.on(Events.InteractionCreate, async interaction => {
           purchaseRecord.staffNote = 'Automatically stored 1 bonus giveaway entry.';
         }
 
+        if (item.id === 'skippass') {
+          userData.luckyRerollTickets += 1;
+          purchaseRecord.fulfilled = true;
+          purchaseRecord.fulfilledAt = Date.now();
+          purchaseRecord.fulfilledBy = client.user?.id || 'system';
+          purchaseRecord.staffNote = 'Automatically stored 1 Lucky Reroll Ticket.';
+        }
+
         userData.purchaseHistory.push(purchaseRecord);
         saveData();
 
@@ -2489,7 +2522,7 @@ client.on(Events.InteractionCreate, async interaction => {
               { name: 'Purchase ID', value: purchaseRecord.id, inline: true },
               {
                 name: 'Status',
-                value: item.id === 'giveaway'
+                value: item.id === 'giveaway' || item.id === 'skippass'
                   ? 'Automatically fulfilled'
                   : 'Pending staff fulfillment',
                 inline: true
@@ -2497,9 +2530,12 @@ client.on(Events.InteractionCreate, async interaction => {
               { name: 'Reward Details', value: item.description, inline: false },
               {
                 name: 'How To Fulfill',
-                value: item.id === 'giveaway'
-                  ? 'Bonus giveaway entry was stored automatically and will be auto-used when the buyer enters a giveaway.'
-                  : item.delivery,
+                value:
+                  item.id === 'giveaway'
+                    ? 'Bonus giveaway entry was stored automatically and will be auto-used when the buyer enters a giveaway.'
+                    : item.id === 'skippass'
+                    ? 'Lucky Reroll Ticket was stored automatically. The buyer can use /reroll to consume it after their free reroll is already used.'
+                    : item.delivery,
                 inline: false
               }
             )
@@ -2514,9 +2550,12 @@ client.on(Events.InteractionCreate, async interaction => {
         }
 
         await interaction.followUp({
-          content: item.id === 'giveaway'
-            ? `✅ You bought **${item.name}** for **${item.cost}** points.\nYou now have **${userData.points}** points left.\nYour stored bonus giveaway entries are now **${userData.giveawayEntries}**.`
-            : `✅ You bought **${item.name}** for **${item.cost}** points.\nYou now have **${userData.points}** points left.\nYour purchase was logged for staff. Reward delivery: **${item.delivery}**`,
+          content:
+            item.id === 'giveaway'
+              ? `✅ You bought **${item.name}** for **${item.cost}** points.\nYou now have **${userData.points}** points left.\nYour stored bonus giveaway entries are now **${userData.giveawayEntries}**.`
+              : item.id === 'skippass'
+              ? `✅ You bought **${item.name}** for **${item.cost}** points.\nYou now have **${userData.points}** points left.\nYour stored Lucky Reroll Tickets are now **${userData.luckyRerollTickets}**.\nUse **/reroll** when your free reroll is already used.`
+              : `✅ You bought **${item.name}** for **${item.cost}** points.\nYou now have **${userData.points}** points left.\nYour purchase was logged for staff. Reward delivery: **${item.delivery}**`,
           ephemeral: true
         });
 
