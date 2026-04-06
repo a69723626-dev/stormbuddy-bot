@@ -47,6 +47,7 @@ const DUEL_POINTS = {
 let data = {
   users: {},
   duels: {},
+  giveaways: {},
   settings: {
     easy: 10,
     medium: 25,
@@ -61,6 +62,7 @@ if (fs.existsSync(DATA_FILE)) {
     data = {
       users: existing.users || {},
       duels: existing.duels || {},
+      giveaways: existing.giveaways || {},
       settings: {
         easy: existing.settings?.easy ?? 10,
         medium: existing.settings?.medium ?? 25,
@@ -85,6 +87,7 @@ function ensureUser(userId) {
       activeDuelId: null,
       dailyClaimedAt: null,
       purchaseHistory: [],
+      giveawayEntries: 0,
       completedChallenges: {
         easy: [],
         medium: [],
@@ -133,6 +136,10 @@ function ensureUser(userId) {
 
   if (!Array.isArray(user.purchaseHistory)) {
     user.purchaseHistory = [];
+  }
+
+  if (typeof user.giveawayEntries !== 'number') {
+    user.giveawayEntries = 0;
   }
 
   if (!user.stats) {
@@ -453,6 +460,7 @@ function buildShopEmbed(userData) {
     .setDescription(
       [
         `**Your balance:** ${userData.points} points`,
+        `**Bonus giveaway entries:** ${userData.giveawayEntries || 0}`,
         '',
         'Spend your points on server rewards.',
         'After you buy something, it is logged for staff in the purchases channel and fulfilled manually unless stated otherwise.'
@@ -700,6 +708,115 @@ function clearUserActiveDuel(userId, duelId) {
   }
 }
 
+function getGiveawayById(giveawayId) {
+  return data.giveaways[giveawayId] || null;
+}
+
+function isSupportedTextChannel(channel) {
+  return (
+    channel &&
+    (
+      channel.type === ChannelType.GuildText ||
+      channel.type === ChannelType.PublicThread ||
+      channel.type === ChannelType.PrivateThread ||
+      channel.type === ChannelType.AnnouncementThread ||
+      channel.type === ChannelType.GuildAnnouncement
+    )
+  );
+}
+
+function buildGiveawayEmbed(giveaway) {
+  const entrants = Object.keys(giveaway.entries || {});
+  const winners = giveaway.winnerIds || [];
+  const endUnix = Math.floor((giveaway.endsAt || Date.now()) / 1000);
+
+  return new EmbedBuilder()
+    .setTitle('🎉 Server Giveaway')
+    .setColor(giveaway.status === 'ended' ? 'Red' : 'Blurple')
+    .setDescription(`**Prize:** ${giveaway.prize}`)
+    .addFields(
+      { name: 'Status', value: giveaway.status === 'ended' ? 'ENDED' : 'ACTIVE', inline: true },
+      { name: 'Winners', value: `${giveaway.winnersCount}`, inline: true },
+      { name: 'Entries', value: `${entrants.length}`, inline: true },
+      {
+        name: giveaway.status === 'ended' ? 'Ended' : 'Ends',
+        value: `<t:${endUnix}:F>\n<t:${endUnix}:R>`,
+        inline: false
+      },
+      {
+        name: 'How To Enter',
+        value: 'Press the button below to enter.\nIf you bought extra giveaway entries in the shop, they are added automatically when this giveaway ends.',
+        inline: false
+      },
+      {
+        name: 'Giveaway ID',
+        value: giveaway.id,
+        inline: false
+      }
+    )
+    .addFields(
+      giveaway.status === 'ended'
+        ? [{
+            name: 'Winner(s)',
+            value: winners.length > 0 ? winners.map(id => `<@${id}>`).join(', ') : 'No valid entries',
+            inline: false
+          }]
+        : []
+    )
+    .setFooter({ text: `Hosted by ${giveaway.hostTag || 'Staff'}` })
+    .setTimestamp(giveaway.createdAt || Date.now());
+}
+
+function buildGiveawayButtons(giveaway, disabled = false) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`givejoin_${giveaway.id}`)
+      .setLabel(giveaway.status === 'ended' ? 'Giveaway Ended' : 'Enter Giveaway')
+      .setEmoji('🎉')
+      .setStyle(ButtonStyle.Success)
+      .setDisabled(disabled || giveaway.status === 'ended')
+  );
+}
+
+function chooseWeightedWinners(weightMap, winnerCount) {
+  const winners = [];
+  const workingMap = { ...weightMap };
+
+  while (winners.length < winnerCount) {
+    const entries = Object.entries(workingMap);
+
+    if (entries.length === 0) {
+      break;
+    }
+
+    const totalWeight = entries.reduce((sum, [, weight]) => sum + weight, 0);
+
+    if (totalWeight <= 0) {
+      break;
+    }
+
+    let roll = Math.random() * totalWeight;
+    let chosenUserId = null;
+
+    for (const [userId, weight] of entries) {
+      roll -= weight;
+      if (roll <= 0) {
+        chosenUserId = userId;
+        break;
+      }
+    }
+
+    if (!chosenUserId) {
+      chosenUserId = entries[entries.length - 1][0];
+    }
+
+    winners.push(chosenUserId);
+    delete workingMap[chosenUserId];
+  }
+
+  return winners;
+}
+
 async function getMessageFromStoredLocation(channelId, messageId) {
   if (!channelId || !messageId) return null;
 
@@ -778,6 +895,107 @@ async function updateOriginalDuelMessage(duel, options = {}) {
   } catch (err) {
     console.error('Failed to update original duel message:', err);
     return false;
+  }
+}
+
+async function updateGiveawayMessage(giveaway, options = {}) {
+  if (!giveaway?.channelId || !giveaway?.messageId) return false;
+
+  try {
+    const message = await getMessageFromStoredLocation(giveaway.channelId, giveaway.messageId);
+
+    if (!message) {
+      console.error('Original giveaway message not found.');
+      return false;
+    }
+
+    await message.edit({
+      content: options.content ?? '',
+      embeds: [buildGiveawayEmbed(giveaway)],
+      components: options.components ?? [buildGiveawayButtons(giveaway, giveaway.status === 'ended')]
+    });
+
+    return true;
+  } catch (err) {
+    console.error('Failed to update giveaway message:', err);
+    return false;
+  }
+}
+
+async function endGiveaway(giveawayId, endedBy = 'StormBuddy') {
+  const giveaway = getGiveawayById(giveawayId);
+
+  if (!giveaway) {
+    return { ok: false, message: 'That giveaway does not exist.' };
+  }
+
+  if (giveaway.status === 'ended') {
+    return { ok: false, message: 'That giveaway has already ended.' };
+  }
+
+  const entrantIds = Object.keys(giveaway.entries || {});
+  const weightMap = {};
+
+  for (const userId of entrantIds) {
+    const userData = ensureUser(userId);
+    const extraEntries = Math.max(0, userData.giveawayEntries || 0);
+    weightMap[userId] = 1 + extraEntries;
+  }
+
+  const winners = chooseWeightedWinners(
+    weightMap,
+    Math.min(giveaway.winnersCount, entrantIds.length)
+  );
+
+  giveaway.status = 'ended';
+  giveaway.endedAt = Date.now();
+  giveaway.endedBy = endedBy;
+  giveaway.winnerIds = winners;
+
+  for (const userId of entrantIds) {
+    const userData = ensureUser(userId);
+    if (userData.giveawayEntries > 0) {
+      userData.giveawayEntries = 0;
+    }
+  }
+
+  saveData();
+
+  await updateGiveawayMessage(giveaway, {
+    components: [buildGiveawayButtons(giveaway, true)]
+  });
+
+  try {
+    const channel = await client.channels.fetch(giveaway.channelId).catch(() => null);
+
+    if (isSupportedTextChannel(channel)) {
+      if (winners.length > 0) {
+        await channel.send(
+          `🎉 Giveaway ended for **${giveaway.prize}**!\nWinner${winners.length === 1 ? '' : 's'}: ${winners.map(id => `<@${id}>`).join(', ')}`
+        );
+      } else {
+        await channel.send(`⚠️ Giveaway ended for **${giveaway.prize}** but there were no valid entries.`);
+      }
+    }
+  } catch (err) {
+    console.error('Failed to announce giveaway result:', err);
+  }
+
+  return {
+    ok: true,
+    giveaway,
+    winners,
+    entrantCount: entrantIds.length
+  };
+}
+
+async function checkExpiredGiveaways() {
+  const now = Date.now();
+
+  for (const giveaway of Object.values(data.giveaways || {})) {
+    if (giveaway.status === 'active' && giveaway.endsAt <= now) {
+      await endGiveaway(giveaway.id, 'Automatic timer');
+    }
   }
 }
 
@@ -938,6 +1156,85 @@ const commands = [
     .setDescription('Spend your StormBuddy points in the shop'),
 
   new SlashCommandBuilder()
+    .setName('giveway')
+    .setDescription('Create, edit, or end a giveaway')
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('create')
+        .setDescription('Create a giveaway')
+        .addStringOption(option =>
+          option
+            .setName('prize')
+            .setDescription('What the giveaway prize is')
+            .setRequired(true)
+        )
+        .addIntegerOption(option =>
+          option
+            .setName('duration_minutes')
+            .setDescription('How long the giveaway should last in minutes')
+            .setRequired(true)
+            .setMinValue(1)
+        )
+        .addIntegerOption(option =>
+          option
+            .setName('winners')
+            .setDescription('How many winners')
+            .setRequired(true)
+            .setMinValue(1)
+            .setMaxValue(20)
+        )
+        .addChannelOption(option =>
+          option
+            .setName('channel')
+            .setDescription('Where to post the giveaway')
+            .setRequired(false)
+        )
+    )
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('end')
+        .setDescription('End a giveaway')
+        .addStringOption(option =>
+          option
+            .setName('giveaway_id')
+            .setDescription('The giveaway ID')
+            .setRequired(true)
+        )
+    )
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('edit')
+        .setDescription('Edit a giveaway')
+        .addStringOption(option =>
+          option
+            .setName('giveaway_id')
+            .setDescription('The giveaway ID')
+            .setRequired(true)
+        )
+        .addStringOption(option =>
+          option
+            .setName('prize')
+            .setDescription('New prize text')
+            .setRequired(false)
+        )
+        .addIntegerOption(option =>
+          option
+            .setName('add_minutes')
+            .setDescription('Add more minutes to the timer')
+            .setRequired(false)
+            .setMinValue(1)
+        )
+        .addIntegerOption(option =>
+          option
+            .setName('winners')
+            .setDescription('New winner count')
+            .setRequired(false)
+            .setMinValue(1)
+            .setMaxValue(20)
+        )
+    ),
+
+  new SlashCommandBuilder()
     .setName('setpoints')
     .setDescription('Change challenge points for a difficulty')
     .addStringOption(option =>
@@ -1067,6 +1364,8 @@ async function registerCommands() {
 client.once(Events.ClientReady, async () => {
   console.log(`Logged in as ${client.user.tag}`);
   await registerCommands();
+  await checkExpiredGiveaways();
+  setInterval(checkExpiredGiveaways, 15000);
 });
 
 client.on(Events.GuildMemberAdd, member => {
@@ -1188,6 +1487,9 @@ client.on(Events.InteractionCreate, async interaction => {
             {
               name: 'Staff Commands',
               value: [
+                '`/giveway create`',
+                '`/giveway edit`',
+                '`/giveway end`',
                 '`/setpoints`',
                 '`/setuserpoints`',
                 '`/addpoints`',
@@ -1315,6 +1617,7 @@ client.on(Events.InteractionCreate, async interaction => {
           .addFields(
             { name: 'Epic', value: targetData.epic || 'Not set', inline: true },
             { name: 'Points', value: `${targetData.points}`, inline: true },
+            { name: 'Bonus Giveaway Entries', value: `${targetData.giveawayEntries || 0}`, inline: true },
             { name: 'Active Challenge', value: targetData.activeChallenge ? targetData.activeChallenge.text : 'None', inline: false },
             { name: 'Active Duel', value: targetData.activeDuelId ? `Duel ID: ${targetData.activeDuelId}` : 'None', inline: false },
             { name: 'Approved Challenges', value: `${targetData.stats.approvedChallenges}`, inline: true },
@@ -1378,6 +1681,143 @@ client.on(Events.InteractionCreate, async interaction => {
           ephemeral: true
         });
         return;
+      }
+
+      if (interaction.commandName === 'giveway') {
+        if (!isStaff(interaction.member)) {
+          await interaction.reply({
+            content: '❌ Only admins or mods can use this.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        const subcommand = interaction.options.getSubcommand();
+
+        if (subcommand === 'create') {
+          const prize = interaction.options.getString('prize');
+          const durationMinutes = interaction.options.getInteger('duration_minutes');
+          const winners = interaction.options.getInteger('winners');
+          const targetChannel = interaction.options.getChannel('channel') || interaction.channel;
+
+          if (!isSupportedTextChannel(targetChannel)) {
+            await interaction.reply({
+              content: '❌ That channel is not a supported text channel.',
+              ephemeral: true
+            });
+            return;
+          }
+
+          const giveawayId = makeId();
+          const giveaway = {
+            id: giveawayId,
+            prize,
+            winnersCount: winners,
+            hostId: interaction.user.id,
+            hostTag: interaction.user.tag,
+            status: 'active',
+            createdAt: Date.now(),
+            endsAt: Date.now() + durationMinutes * 60 * 1000,
+            entries: {},
+            winnerIds: [],
+            channelId: null,
+            messageId: null,
+            endedAt: null,
+            endedBy: null
+          };
+
+          const sentMessage = await targetChannel.send({
+            embeds: [buildGiveawayEmbed(giveaway)],
+            components: [buildGiveawayButtons(giveaway)]
+          });
+
+          giveaway.channelId = sentMessage.channelId;
+          giveaway.messageId = sentMessage.id;
+          data.giveaways[giveawayId] = giveaway;
+          saveData();
+
+          await interaction.reply({
+            content: `✅ Giveaway created in ${targetChannel}.\n**ID:** \`${giveawayId}\``,
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (subcommand === 'end') {
+          const giveawayId = interaction.options.getString('giveaway_id');
+          const result = await endGiveaway(giveawayId, interaction.user.tag);
+
+          if (!result.ok) {
+            await interaction.reply({
+              content: `❌ ${result.message}`,
+              ephemeral: true
+            });
+            return;
+          }
+
+          await interaction.reply({
+            content: result.winners.length > 0
+              ? `✅ Giveaway ended.\nWinner${result.winners.length === 1 ? '' : 's'}: ${result.winners.map(id => `<@${id}>`).join(', ')}`
+              : '✅ Giveaway ended, but there were no valid entries.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (subcommand === 'edit') {
+          const giveawayId = interaction.options.getString('giveaway_id');
+          const prize = interaction.options.getString('prize');
+          const addMinutes = interaction.options.getInteger('add_minutes');
+          const winners = interaction.options.getInteger('winners');
+
+          const giveaway = getGiveawayById(giveawayId);
+
+          if (!giveaway) {
+            await interaction.reply({
+              content: '❌ That giveaway does not exist.',
+              ephemeral: true
+            });
+            return;
+          }
+
+          if (giveaway.status === 'ended') {
+            await interaction.reply({
+              content: '❌ You cannot edit a giveaway that already ended.',
+              ephemeral: true
+            });
+            return;
+          }
+
+          if (!prize && !addMinutes && !winners) {
+            await interaction.reply({
+              content: '❌ You need to change at least one thing.',
+              ephemeral: true
+            });
+            return;
+          }
+
+          if (prize) {
+            giveaway.prize = prize;
+          }
+
+          if (typeof addMinutes === 'number') {
+            giveaway.endsAt += addMinutes * 60 * 1000;
+          }
+
+          if (typeof winners === 'number') {
+            giveaway.winnersCount = winners;
+          }
+
+          saveData();
+
+          await updateGiveawayMessage(giveaway);
+
+          await interaction.reply({
+            content: `✅ Giveaway \`${giveaway.id}\` updated.`,
+            ephemeral: true
+          });
+          return;
+        }
       }
 
       if (interaction.commandName === 'setpoints') {
@@ -1890,6 +2330,14 @@ client.on(Events.InteractionCreate, async interaction => {
           staffNote: null
         };
 
+        if (item.id === 'giveaway') {
+          userData.giveawayEntries += 1;
+          purchaseRecord.fulfilled = true;
+          purchaseRecord.fulfilledAt = Date.now();
+          purchaseRecord.fulfilledBy = client.user?.id || 'system';
+          purchaseRecord.staffNote = 'Automatically added 1 bonus giveaway entry.';
+        }
+
         userData.purchaseHistory.push(purchaseRecord);
         saveData();
 
@@ -1911,7 +2359,8 @@ client.on(Events.InteractionCreate, async interaction => {
           (purchasesChannel.type === ChannelType.GuildText ||
             purchasesChannel.type === ChannelType.PublicThread ||
             purchasesChannel.type === ChannelType.PrivateThread ||
-            purchasesChannel.type === ChannelType.AnnouncementThread)
+            purchasesChannel.type === ChannelType.AnnouncementThread ||
+            purchasesChannel.type === ChannelType.GuildAnnouncement)
         ) {
           const purchaseEmbed = new EmbedBuilder()
             .setTitle('🛒 New Shop Purchase')
@@ -1926,9 +2375,21 @@ client.on(Events.InteractionCreate, async interaction => {
               { name: 'Cost', value: `${item.cost} points`, inline: true },
               { name: 'Points Left', value: `${userData.points}`, inline: true },
               { name: 'Purchase ID', value: purchaseRecord.id, inline: true },
-              { name: 'Status', value: 'Pending staff fulfillment', inline: true },
+              {
+                name: 'Status',
+                value: item.id === 'giveaway'
+                  ? 'Automatically fulfilled'
+                  : 'Pending staff fulfillment',
+                inline: true
+              },
               { name: 'Reward Details', value: item.description, inline: false },
-              { name: 'How To Fulfill', value: item.delivery, inline: false }
+              {
+                name: 'How To Fulfill',
+                value: item.id === 'giveaway'
+                  ? 'Bonus giveaway entry was added automatically to the buyer account.'
+                  : item.delivery,
+                inline: false
+              }
             )
             .setFooter({ text: 'Staff: handle the reward, then react with ✅ when done.' })
             .setTimestamp();
@@ -1941,10 +2402,56 @@ client.on(Events.InteractionCreate, async interaction => {
         }
 
         await interaction.followUp({
-          content: `✅ You bought **${item.name}** for **${item.cost}** points.\nYou now have **${userData.points}** points left.\nYour purchase was logged for staff. Reward delivery: **${item.delivery}**`,
+          content: item.id === 'giveaway'
+            ? `✅ You bought **${item.name}** for **${item.cost}** points.\nYou now have **${userData.points}** points left.\nYour bonus giveaway entries are now **${userData.giveawayEntries}**.`
+            : `✅ You bought **${item.name}** for **${item.cost}** points.\nYou now have **${userData.points}** points left.\nYour purchase was logged for staff. Reward delivery: **${item.delivery}**`,
           ephemeral: true
         });
 
+        return;
+      }
+
+      if (action === 'givejoin') {
+        const giveawayId = parts[0];
+        const giveaway = getGiveawayById(giveawayId);
+
+        if (!giveaway) {
+          await interaction.reply({
+            content: '❌ That giveaway no longer exists.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (giveaway.status === 'ended') {
+          await interaction.reply({
+            content: '❌ This giveaway already ended.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        const userData = ensureUser(interaction.user.id);
+
+        if (giveaway.entries[interaction.user.id]) {
+          await interaction.reply({
+            content: `ℹ️ You are already entered.\nYour total weight for this giveaway will be **${1 + (userData.giveawayEntries || 0)}** entry${1 + (userData.giveawayEntries || 0) === 1 ? '' : 'ies'}.`,
+            ephemeral: true
+          });
+          return;
+        }
+
+        giveaway.entries[interaction.user.id] = {
+          enteredAt: Date.now()
+        };
+        saveData();
+
+        await updateGiveawayMessage(giveaway);
+
+        await interaction.reply({
+          content: `✅ You entered the giveaway for **${giveaway.prize}**.\nYour total weight for this giveaway will be **${1 + (userData.giveawayEntries || 0)}** entry${1 + (userData.giveawayEntries || 0) === 1 ? '' : 'ies'}.`,
+          ephemeral: true
+        });
         return;
       }
 
@@ -2403,7 +2910,7 @@ client.on(Events.InteractionCreate, async interaction => {
             .setFooter({ text: `Approved by ${interaction.user.tag}` })
             .setTimestamp();
 
-          await winnerUser.send({ embeds: [dmEmbed] }).catch(() => null);
+            await winnerUser.send({ embeds: [dmEmbed] }).catch(() => null);
         }
 
         if (loserUser) {
@@ -2527,7 +3034,8 @@ client.on(Events.InteractionCreate, async interaction => {
           reviewChannel.type !== ChannelType.GuildText &&
           reviewChannel.type !== ChannelType.PublicThread &&
           reviewChannel.type !== ChannelType.PrivateThread &&
-          reviewChannel.type !== ChannelType.AnnouncementThread
+          reviewChannel.type !== ChannelType.AnnouncementThread &&
+          reviewChannel.type !== ChannelType.GuildAnnouncement
         ) {
           await interaction.editReply({
             content: '❌ The review channel is not a normal text channel.'
@@ -2636,7 +3144,8 @@ client.on(Events.InteractionCreate, async interaction => {
           reviewChannel.type !== ChannelType.GuildText &&
           reviewChannel.type !== ChannelType.PublicThread &&
           reviewChannel.type !== ChannelType.PrivateThread &&
-          reviewChannel.type !== ChannelType.AnnouncementThread
+          reviewChannel.type !== ChannelType.AnnouncementThread &&
+          reviewChannel.type !== ChannelType.GuildAnnouncement
         ) {
           await interaction.editReply({
             content: '❌ The review channel is not a normal text channel.'
