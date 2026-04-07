@@ -2642,6 +2642,76 @@ client.on(Events.InteractionCreate, async interaction => {
           purchaseRecord.rewardSummary = mysteryRewardResult.label;
         }
 
+          if (item.id === 'featuredclip') {
+  userData.purchaseHistory.push(purchaseRecord);
+  saveData();
+
+  const modal = new ModalBuilder()
+    .setCustomId(`featuredclip_${purchaseRecord.id}`)
+    .setTitle('Submit Featured Clip');
+
+  const clipLinkInput = new TextInputBuilder()
+    .setCustomId('clip_link')
+    .setLabel('Clip Link')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setPlaceholder('Paste your Discord, Medal, YouTube, TikTok, or Streamable link');
+
+  const clipNoteInput = new TextInputBuilder()
+    .setCustomId('clip_note')
+    .setLabel('Short Description')
+    .setStyle(TextInputStyle.Paragraph)
+    .setRequired(true)
+    .setPlaceholder('Describe what happens in the clip');
+
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(clipLinkInput),
+    new ActionRowBuilder().addComponents(clipNoteInput)
+  );
+
+  await interaction.showModal(modal);
+  return;
+}
+
+if (item.id === 'customrole') {
+  userData.purchaseHistory.push(purchaseRecord);
+  saveData();
+
+  const modal = new ModalBuilder()
+    .setCustomId(`customrole_${purchaseRecord.id}`)
+    .setTitle('Request Custom Role');
+
+  const roleNameInput = new TextInputBuilder()
+    .setCustomId('role_name')
+    .setLabel('Role Name')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setPlaceholder('Enter your custom role name');
+
+  const roleColorInput = new TextInputBuilder()
+    .setCustomId('role_color')
+    .setLabel('Role Color')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setPlaceholder('Example: #ff0000');
+
+  const roleNoteInput = new TextInputBuilder()
+    .setCustomId('role_note')
+    .setLabel('Extra Notes')
+    .setStyle(TextInputStyle.Paragraph)
+    .setRequired(false)
+    .setPlaceholder('Anything staff should know');
+
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(roleNameInput),
+    new ActionRowBuilder().addComponents(roleColorInput),
+    new ActionRowBuilder().addComponents(roleNoteInput)
+  );
+
+  await interaction.showModal(modal);
+  return;
+}
+          
         userData.purchaseHistory.push(purchaseRecord);
         saveData();
 
@@ -3326,6 +3396,106 @@ client.on(Events.InteractionCreate, async interaction => {
     if (interaction.isModalSubmit()) {
       const [modalType, id] = interaction.customId.split('_');
 
+      if (modalType === 'featuredclip') {
+  await interaction.deferReply({ ephemeral: true });
+
+  const purchaseId = id;
+  const clipLink = interaction.fields.getTextInputValue('clip_link');
+  const clipNote = interaction.fields.getTextInputValue('clip_note');
+  const userData = ensureUser(interaction.user.id);
+
+  const purchase = userData.purchaseHistory.find(p => p.id === purchaseId);
+
+  if (!purchase || purchase.itemId !== 'featuredclip') {
+    await interaction.editReply({
+      content: '❌ That featured clip purchase could not be found.'
+    });
+    return;
+  }
+
+  let purchasesChannel = null;
+
+  try {
+    purchasesChannel = await client.channels.fetch(PURCHASES_CHANNEL_ID);
+  } catch (err) {
+    console.error('Could not fetch purchases channel:', err);
+  }
+
+  if (purchasesChannel && isSupportedTextChannel(purchasesChannel)) {
+    const embed = new EmbedBuilder()
+      .setTitle('📹 Featured Clip Submission')
+      .setColor('Purple')
+      .setDescription(`<@${interaction.user.id}> submitted their featured clip purchase.`)
+      .addFields(
+        { name: 'User', value: interaction.user.tag, inline: true },
+        { name: 'Epic', value: userData.epic || 'Not set', inline: true },
+        { name: 'Purchase ID', value: purchaseId, inline: true },
+        { name: 'Clip Link', value: clipLink, inline: false },
+        { name: 'Description', value: clipNote, inline: false }
+      )
+      .setTimestamp();
+
+    await purchasesChannel.send({ embeds: [embed] });
+  }
+
+  await interaction.editReply({
+    content: '✅ Your featured clip was submitted for staff review.'
+  });
+
+  return;
+}
+
+if (modalType === 'customrole') {
+  await interaction.deferReply({ ephemeral: true });
+
+  const purchaseId = id;
+  const roleName = interaction.fields.getTextInputValue('role_name');
+  const roleColor = interaction.fields.getTextInputValue('role_color');
+  const roleNote = interaction.fields.getTextInputValue('role_note') || 'None';
+  const userData = ensureUser(interaction.user.id);
+
+  const purchase = userData.purchaseHistory.find(p => p.id === purchaseId);
+
+  if (!purchase || purchase.itemId !== 'customrole') {
+    await interaction.editReply({
+      content: '❌ That custom role purchase could not be found.'
+    });
+    return;
+  }
+
+  let purchasesChannel = null;
+
+  try {
+    purchasesChannel = await client.channels.fetch(PURCHASES_CHANNEL_ID);
+  } catch (err) {
+    console.error('Could not fetch purchases channel:', err);
+  }
+
+  if (purchasesChannel && isSupportedTextChannel(purchasesChannel)) {
+    const embed = new EmbedBuilder()
+      .setTitle('✨ Custom Role Request')
+      .setColor('Blue')
+      .setDescription(`<@${interaction.user.id}> submitted their custom role request.`)
+      .addFields(
+        { name: 'User', value: interaction.user.tag, inline: true },
+        { name: 'Epic', value: userData.epic || 'Not set', inline: true },
+        { name: 'Purchase ID', value: purchaseId, inline: true },
+        { name: 'Role Name', value: roleName, inline: false },
+        { name: 'Role Color', value: roleColor, inline: false },
+        { name: 'Notes', value: roleNote, inline: false }
+      )
+      .setTimestamp();
+
+    await purchasesChannel.send({ embeds: [embed] });
+  }
+
+  await interaction.editReply({
+    content: '✅ Your custom role request was sent to staff.'
+  });
+
+  return;
+}
+      
       if (modalType === 'proofmodal') {
         await interaction.deferReply({ ephemeral: true });
 
