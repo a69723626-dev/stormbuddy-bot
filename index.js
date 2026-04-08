@@ -1799,29 +1799,29 @@ client.on(Events.InteractionCreate, async interaction => {
         return;
       }
       
-      if (interaction.commandName === 'setepic') {
-  const username = interaction.options.getString('username');
-  const userData = ensureUser(interaction.user.id);
+            if (interaction.commandName === 'setepic') {
+        const username = interaction.options.getString('username');
+        const userData = ensureUser(interaction.user.id);
 
-  const validEpic = await isValidEpicUsername(username);
+        const validEpic = await isValidEpicUsername(username);
 
-  if (!validEpic) {
-    await interaction.reply({
-      content: '❌ That is not a valid Epic Games username.',
-      ephemeral: true
-    });
-    return;
-  }
+        if (!validEpic) {
+          await interaction.reply({
+            content: '❌ That is not a valid Epic Games username.',
+            ephemeral: true
+          });
+          return;
+        }
 
-  userData.epic = username;
-  saveData();
+        userData.epic = username;
+        saveData();
 
-  await interaction.reply({
-    content: `✅ Your Epic username is now set to **${username}**`
-  });
+        await interaction.reply({
+          content: `✅ Your Epic username is now set to **${username}**`
+        });
 
-  return;
-}
+        return;
+      }
 
       if (interaction.commandName === 'daily') {
         const now = Date.now();
