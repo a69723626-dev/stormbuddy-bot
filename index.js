@@ -80,13 +80,23 @@ function saveData() {
 
 async function isValidEpicUsername(username) {
   try {
+    const cleaned = username.trim();
+
+    if (cleaned.length < 3 || cleaned.length > 16) {
+      return false;
+    }
+
     const response = await fetch(
-      `https://fortnite-api.com/v2/stats/br/v2?name=${encodeURIComponent(username)}`
+      `https://fortnite-api.com/v2/stats/br/v2?name=${encodeURIComponent(cleaned)}`
     );
 
     const data = await response.json();
 
-    return data && data.status === 200;
+    if (!data || data.status !== 200 || !data.data || !data.data.account || !data.data.account.name) {
+      return false;
+    }
+
+    return data.data.account.name.toLowerCase() === cleaned.toLowerCase();
   } catch (err) {
     return false;
   }
