@@ -1,6 +1,7 @@
 require('dotenv').config();
 
 const fs = require('fs');
+const axios = require('axios');
 const {
   Client,
   GatewayIntentBits,
@@ -76,6 +77,18 @@ if (fs.existsSync(DATA_FILE)) {
 
 function saveData() {
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+}
+
+async function isValidEpicUsername(username) {
+  try {
+    const response = await axios.get(
+      `https://fortnite-api.com/v2/stats/br/v2?name=${encodeURIComponent(username)}`
+    );
+
+    return response.data && response.data.status === 200;
+  } catch (err) {
+    return false;
+  }
 }
 
 function ensureUser(userId) {
@@ -1776,12 +1789,28 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       if (interaction.commandName === 'setepic') {
-        const username = interaction.options.getString('username');
-        userData.epic = username;
-        saveData();
+  const username = interaction.options.getString('username');
+  const userData = ensureUser(interaction.user.id);
 
-        await interaction.reply(`✅ Your Epic username is now set to **${username}**`);
-        return;
+  const validEpic = await isValidEpicUsername(username);
+
+  if (!validEpic) {
+    await interaction.reply({
+      content: '❌ That is not a valid Epic Games username.',
+      ephemeral: true
+    });
+    return;
+  }
+
+  userData.epic = username;
+  saveData();
+
+  await interaction.reply({
+    content: `✅ Your Epic username is now set to **${username}**`
+  });
+
+  return;
+}
       }
 
       if (interaction.commandName === 'daily') {
