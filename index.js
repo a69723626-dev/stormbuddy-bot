@@ -2600,7 +2600,6 @@ client.on(Events.InteractionCreate, async interaction => {
 
         return;
       }
-    }
 
     if (interaction.isButton()) {
       const [action, ...parts] = interaction.customId.split('_');
