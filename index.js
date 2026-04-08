@@ -3487,8 +3487,8 @@ if (modalType === 'customrole') {
   await interaction.deferReply({ ephemeral: true });
 
   const purchaseId = id;
-  const roleName = interaction.fields.getTextInputValue('role_name');
-  const roleColor = interaction.fields.getTextInputValue('role_color');
+  const roleName = interaction.fields.getTextInputValue('role_name').trim();
+  const roleColor = interaction.fields.getTextInputValue('role_color').trim();
   const roleNote = interaction.fields.getTextInputValue('role_note') || 'None';
   const userData = ensureUser(interaction.user.id);
 
@@ -3500,6 +3500,129 @@ if (modalType === 'customrole') {
     });
     return;
   }
+
+  if (purchase.fulfilled) {
+    await interaction.editReply({
+      content: '❌ This custom role purchase has already been used.'
+    });
+    return;
+  }
+
+  if (roleName.length < 1 || roleName.length > 100) {
+    await interaction.editReply({
+      content: '❌ Role name must be between 1 and 100 characters.'
+    });
+    return;
+  }
+
+  const colorRegex = /^#?[0-9A-Fa-f]{6}$/;
+
+  if (!colorRegex.test(roleColor)) {
+    await interaction.editReply({
+      content: '❌ Role color must be a valid hex code like `#ff0000`.'
+    });
+    return;
+  }
+
+  const formattedColor = roleColor.startsWith('#') ? roleColor : `#${roleColor}`;
+
+  const guild = interaction.guild;
+  if (!guild) {
+    await interaction.editReply({
+      content: '❌ This can only be used inside a server.'
+    });
+    return;
+  }
+
+  const botMember = await guild.members.fetchMe().catch(() => null);
+
+  if (!botMember || !botMember.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
+    await interaction.editReply({
+      content: '❌ I do not have permission to manage roles.'
+    });
+    return;
+  }
+
+  const existingRole = guild.roles.cache.find(
+    role => role.name.toLowerCase() === roleName.toLowerCase()
+  );
+
+  if (existingRole) {
+    await interaction.editReply({
+      content: '❌ A role with that name already exists. Please buy again later with a different role name or ask staff.'
+    });
+    return;
+  }
+
+  let createdRole;
+
+  try {
+    createdRole = await guild.roles.create({
+      name: roleName,
+      color: formattedColor,
+      reason: `Custom role purchase by ${interaction.user.tag}`
+    });
+  } catch (err) {
+    console.error('Failed to create custom role:', err);
+    await interaction.editReply({
+      content: '❌ I could not create that role. Make sure my bot role is above the role position where new roles are created.'
+    });
+    return;
+  }
+
+  try {
+    const member = await guild.members.fetch(interaction.user.id);
+    await member.roles.add(createdRole, 'Purchased custom role from StormBuddy shop');
+  } catch (err) {
+    console.error('Failed to assign custom role:', err);
+
+    await interaction.editReply({
+      content: '❌ I created the role, but I could not assign it to you. Please ask staff to move my bot role higher and then assign the role manually.'
+    });
+    return;
+  }
+
+  purchase.fulfilled = true;
+  purchase.fulfilledAt = Date.now();
+  purchase.fulfilledBy = client.user?.id || 'system';
+  purchase.staffNote = `Created and assigned custom role "${roleName}" with color ${formattedColor}. Notes: ${roleNote}`;
+  purchase.rewardSummary = `Custom role: ${roleName} (${formattedColor})`;
+  saveData();
+
+  let purchasesChannel = null;
+
+  try {
+    purchasesChannel = await client.channels.fetch(PURCHASES_CHANNEL_ID);
+  } catch (err) {
+    console.error('Could not fetch purchases channel:', err);
+  }
+
+  if (purchasesChannel && isSupportedTextChannel(purchasesChannel)) {
+    const embed = new EmbedBuilder()
+      .setTitle('✨ Custom Role Created')
+      .setColor(formattedColor)
+      .setDescription(`<@${interaction.user.id}> had their custom role created automatically.`)
+      .addFields(
+        { name: 'User', value: interaction.user.tag, inline: true },
+        { name: 'Epic', value: userData.epic || 'Not set', inline: true },
+        { name: 'Purchase ID', value: purchaseId, inline: true },
+        { name: 'Role Name', value: roleName, inline: false },
+        { name: 'Role Color', value: formattedColor, inline: true },
+        { name: 'Notes', value: roleNote, inline: false }
+      )
+      .setTimestamp();
+
+    await purchasesChannel.send({ embeds: [embed] }).catch(err => {
+      console.error('Failed to send custom role log:', err);
+    });
+  }
+
+  await interaction.editReply({
+    content: `✅ Your custom role **${roleName}** was created and assigned to you.`
+  });
+
+  return;
+}
 
   let purchasesChannel = null;
 
