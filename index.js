@@ -1798,7 +1798,7 @@ client.on(Events.InteractionCreate, async interaction => {
         });
         return;
       }
-
+      
       if (interaction.commandName === 'setepic') {
   const username = interaction.options.getString('username');
   const userData = ensureUser(interaction.user.id);
