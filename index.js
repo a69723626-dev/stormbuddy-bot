@@ -1822,7 +1822,6 @@ client.on(Events.InteractionCreate, async interaction => {
 
   return;
 }
-      }
 
       if (interaction.commandName === 'daily') {
         const now = Date.now();
