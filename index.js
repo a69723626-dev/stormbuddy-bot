@@ -1,7 +1,6 @@
 require('dotenv').config();
 
 const fs = require('fs');
-const axios = require('axios');
 const {
   Client,
   GatewayIntentBits,
@@ -81,11 +80,13 @@ function saveData() {
 
 async function isValidEpicUsername(username) {
   try {
-    const response = await axios.get(
+    const response = await fetch(
       `https://fortnite-api.com/v2/stats/br/v2?name=${encodeURIComponent(username)}`
     );
 
-    return response.data && response.data.status === 200;
+    const data = await response.json();
+
+    return data && data.status === 200;
   } catch (err) {
     return false;
   }
